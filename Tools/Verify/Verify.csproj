@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Check.dll(= 실제 게임 코드)을 불러다 Unity 없이 직접 돌려 보는 테스트.
+
+    Unity 런타임이 필요한 것(MonoBehaviour, 코루틴, Tilemap, 씬 로드)은 건드리지
+    않고, 순수 계산으로 답이 정해지는 부분만 확인한다. 그래서 여기서 통과했다고
+    에디터에서 잘 돈다는 뜻은 아니다. 반대로 여기서 실패하면 확실히 잘못된 것이다.
+
+    Check 를 ProjectReference 로 걸어 두었으므로 dotnet run 한 번이면
+    게임 소스 컴파일까지 함께 이루어진다.
+  -->
+  <Import Project="../Common.props" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net5.0</TargetFramework>
+    <LangVersion>8.0</LangVersion>
+    <AssemblyName>Verify</AssemblyName>
+    <RootNamespace>Verify</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Check/Check.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(UnityManaged)/UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.TilemapModule"><HintPath>$(UnityManaged)/UnityEngine.TilemapModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.GridModule"><HintPath>$(UnityManaged)/UnityEngine.GridModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.SharedInternalsModule"><HintPath>$(UnityManaged)/UnityEngine.SharedInternalsModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(UnityManaged)/UnityEngine.IMGUIModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(UnityManaged)/UnityEngine.InputLegacyModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(UnityManaged)/UnityEngine.TextRenderingModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.Physics2DModule"><HintPath>$(UnityManaged)/UnityEngine.Physics2DModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(UnityManaged)/UnityEngine.dll</HintPath></Reference>
+  </ItemGroup>
+
+</Project>

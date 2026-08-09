@@ -1,0 +1,24 @@
+<Project>
+
+  <!--
+    Check 와 Verify 가 함께 쓰는 설정.
+
+    Unity 설치 경로가 다르면 여기의 UnityVersion 만 바꾸거나,
+    명령줄에서 -p:UnityManaged=... 로 덮어쓰면 된다.
+  -->
+  <PropertyGroup>
+    <!-- Tools/ 에서 한 단계 올라가면 프로젝트 루트다. -->
+    <ProjectRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))/</ProjectRoot>
+
+    <UnityVersion Condition="'$(UnityVersion)' == ''">2020.3.21f1</UnityVersion>
+    <UnityManaged Condition="'$(UnityManaged)' == ''">C:/Program Files/Unity/Hub/Editor/$(UnityVersion)/Editor/Data/Managed/UnityEngine</UnityManaged>
+
+    <!--
+      TextMeshPro 와 uGUI 는 Unity 가 패키지에서 컴파일해 두는 것이라
+      설치 폴더가 아니라 프로젝트의 Library 안에 있다.
+      Unity 로 이 프로젝트를 한 번이라도 연 적이 있어야 생긴다.
+    -->
+    <UnityScriptAssemblies>$(ProjectRoot)Library/ScriptAssemblies</UnityScriptAssemblies>
+  </PropertyGroup>
+
+</Project>

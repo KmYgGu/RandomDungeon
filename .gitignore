@@ -70,3 +70,14 @@ crashlytics-build.properties
 # Temporary auto-generated Android Assets
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
 /[Aa]ssets/[Ss]treamingAssets/aa/*
+
+# ── 검증 환경 (Tools/) ────────────────────────────────────────────────
+# Unity 프로젝트용 .gitignore 는 위에서 *.csproj 를 통째로 무시한다.
+# 그것은 Unity 가 Assets 로부터 자동 생성하는 것들을 위한 규칙이고,
+# Tools/ 의 것은 손으로 쓴 파일이라 반드시 저장소에 남아야 한다.
+!Tools/**/*.csproj
+
+# 빌드 산출물만 제외한다. 위쪽 /[Oo]bj/ 와 /[Bb]uild/ 는 루트에만 걸리므로
+# Tools 아래는 따로 적어 줘야 한다.
+Tools/**/bin/
+Tools/**/obj/
