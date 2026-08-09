@@ -67,3 +67,6 @@ TagManager:
   - name: attack
     uniqueID: 311824179
     locked: 0
+  - name: UI
+    uniqueID: 1195463732
+    locked: 0

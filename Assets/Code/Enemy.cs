@@ -1,576 +1,577 @@
-using System;
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
-using UnityEngine.Tilemaps;
 
-
+/// <summary>
+/// 적의 행동. 플레이어를 발견하면 쫓고(Chase), 아니면 통로 쪽 출구를 향해 돌아다닌다(Patrol).
+///
+/// 예전에는 MoveEnemy() 하나가 200줄짜리 코루틴이었고,
+/// "방향을 고르고 → 갈 수 있는지 보고 → 옮기고 → 턴을 끝낸다" 는 같은 흐름이
+/// Chase / Patrol / 도착 후 배회 / 막혔을 때의 우회 이렇게 네 번 복사돼 있었다.
+/// 그래서 EnemyTurnCompleted() 호출이 여덟 군데 흩어졌고, 어느 한 경로라도
+/// 빠뜨리면 게임이 그대로 멈춰 버리는 구조였다.
+///
+/// 지금은 그 흐름이 TryMoveAlong() 한 곳에 있다.
+///
+/// 한 턴은 바깥(GameManager.MoveEnemies)이 세 단계로 나누어 돌린다.
+///   DecideAttack() - 무엇을 할지 정한다. 모든 적이 먼저 정한 뒤에야 움직인다.
+///   TakeStep()     - 이동. 기다림이 없어 마릿수와 무관하게 같은 프레임에 끝난다.
+///   AttackTurn()   - 공격. 연출이 있어 한 마리씩 차례로 돈다.
+/// </summary>
 public class Enemy : MovingObject
 {
-    public List<Rect> roomdata; //RandomDung���� ������ ������ ������ '��'���� ��ġ��ǥ�� ��� ��
-    public List<Vector3> connectionPoints; //�� ��ó�� ��η� ���� �ִ� ��ġ���� ��ǥ�� ��� ��
-    private bool hasReachedClosestPoint = false;
-    private List<Vector2> walkRemember = new List<Vector2>();//�̵��� �Ÿ��� �ٽ� �ǵ���  ���� �ʰ� �Դ� ���� ���
+    public enum EnemyMode
+    {
+        /// <summary>플레이어를 쫓는다.</summary>
+        Chase,
+        /// <summary>통로 쪽 출구를 향해 돌아다닌다.</summary>
+        Patrol,
+    }
 
-    [SerializeField] private bool isPatrolTargetSet = false;
-    [SerializeField] private Vector3 closestPoint;
+    /// <summary>
+    /// 이 걸음 수보다 멀어지면 추격을 포기한다.
+    /// 직선 거리가 아니라 실제로 걸어가야 하는 걸음 수다.
+    /// </summary>
+    private const int ChaseGiveUpDistance = 20;
+
+    /// <summary>같은 칸으로 볼 거리.</summary>
+    private const float SameCellThreshold = 0.1f;
+
+    /// <summary>순찰 목표를 고를 때 방 경계 밖으로 얼마나 더 살펴볼지.</summary>
+    private const int PatrolSearchMargin = 1;
+
+    /// <summary>치명타가 나올 확률과 그 배율.</summary>
+    private const float CriticalChance = 0.1f;
+    private const double CriticalMultiplier = 1.8;
+
+    /// <summary>공격이 맞을 확률(10%는 빗나감).</summary>
+    private const float HitChance = 0.9f;
+
+    private static readonly Vector2[] EightDirections =
+    {
+        Vector2.up, Vector2.down, Vector2.left, Vector2.right,
+        new Vector2(1, 1), new Vector2(-1, 1), new Vector2(1, -1), new Vector2(-1, -1),
+    };
+
+    private static readonly Vector2[] CardinalDirections =
+    {
+        Vector2.up, Vector2.down, Vector2.left, Vector2.right,
+    };
+
+    /// <summary>RandomDung 이 만든 방들의 영역.</summary>
+    public List<Rect> roomdata;
+
+    /// <summary>방에서 통로로 빠져나갈 수 있는 지점들.</summary>
+    public List<Vector3> connectionPoints;
 
     public int ThisHp;
-    int ThisAttack;
-    int ThisDefense;
+    private int maxHp;
+    private int attackPower;
+    private int defense;
 
-    bool attacking;
+    [SerializeField] private EnemyMode currentMode = EnemyMode.Patrol;
+    [SerializeField] private bool isPatrolTargetSet;
+    [SerializeField] private Vector3 patrolTarget;
 
+    /// <summary>순찰 목표에 도착해서, 이제 아무 데나 헤매는 중인가.</summary>
+    private bool isWandering;
+
+    /// <summary>같은 자리를 맴돌지 않도록 이미 지나온 칸을 기억한다.</summary>
+    private readonly List<Vector2> visited = new List<Vector2>();
 
     protected override void Start()
     {
-        connectionPoints = FindObjectOfType<RandomDung>().edgePoints;
+        var dungeon = FindObjectOfType<RandomDung>();
+        connectionPoints = dungeon.edgePoints;
+        roomdata = dungeon.RoomData;
+
         GameManager.instance.AddEnemyToList(this);
-        roomdata = FindObjectOfType<RandomDung>().RoomData;
 
         base.Start();
     }
 
-    public enum EnemyMode
+    private Vector2 PlayerPosition => GameManager.instance.Player.transform.position;
+
+    // ── 한 턴의 행동 ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 이번 턴에 플레이어를 때릴 것인가. 판단하면서 추격/순찰 상태도 갱신한다.
+    ///
+    /// 한 턴은 두 단계로 나뉜다. 먼저 모든 적이 무엇을 할지 정하고(이 메서드),
+    /// 그다음 이동하는 적을 한꺼번에 옮긴 뒤, 때리는 적만 차례로 돈다.
+    ///
+    /// 정하는 일을 이동보다 먼저 몰아 두는 이유가 있다. 그러지 않으면 앞의 적이
+    /// 움직여 플레이어 옆에 붙는 순간 뒤의 적 판단이 달라져, 목록에서의 순서가
+    /// 곧 규칙이 되어 버린다. 먼저 다 정해 두면 순서를 타지 않는다.
+    /// </summary>
+    public bool DecideAttack()
     {
-        Chase,
-        Patrol
-    }
-    private EnemyMode currentMode = EnemyMode.Patrol;
-
-    protected override void AttemptMove<T>(Vector2 direction)
-    {
-        base.AttemptMove<T>(direction);
-        if (canMove)
-        {
-            StartCoroutine(SmoothMovement(end));
-        }
-    }
-    
-
-    //���� ��忡 ���� �ൿ�� �޶���
-    public IEnumerator MoveEnemy()
-    {
-        attacking = false;
-        yield return StartCoroutine(CheckForPlayer());
-        if (attacking) yield break;
-        switch (currentMode)
-        {
-            case EnemyMode.Chase:
-                Vector2 chaseDirection = GetDirectionToPlayer();
-                Vector2 chasePosition = (Vector2)transform.position + chaseDirection;
-
-                //���� �̵��� ��ο� 1.�ٸ� ���� �ִ���, 2.���� ���θ�������, 3.�밢������ ���ߵǴµ� �� ���̿� ���� �ִ���
-                if (IsEnemyAtPosition(chasePosition) || IsWallAtPosition(chasePosition) || !CanMoveDiagonally(transform.position, chaseDirection))//||!IsBlockedByWater(chaseDirection)
-                {
-                    //���� �÷��̾�� ������ ������ �� �ִ� ���� ����� �������� ����
-                    Vector2[] alternateDirections = GetAlternateDirections(chaseDirection);
-
-                    foreach (Vector2 altDirection in alternateDirections)
-                    {
-                        Vector2 altPosition = (Vector2)transform.position + altDirection;
-                        if (!IsEnemyAtPosition(altPosition) && !IsWallAtPosition(altPosition) && !IsBlockedByWater(altPosition))
-                        {
-                            SavePosition(altPosition);
-                            AttemptMove<Player>(altDirection);
-                            yield return new WaitForFixedUpdate();
-                            GameManager.instance.EnemyTurnCompleted();
-
-                            yield break;
-                        }
-                    }
-                    GameManager.instance.EnemyTurnCompleted();//?
-                    Debug.Log("������5");
-                    yield break; // ��� ������ ������ ��� ��� ����
-                }
-
-                SavePosition(chasePosition);
-                AttemptMove<Player>(chaseDirection);
-                yield return new WaitForFixedUpdate();
-                GameManager.instance.EnemyTurnCompleted();
-                break;
-
-            case EnemyMode.Patrol:
-
-                Vector2 lastPosition = transform.position; // Enemy�� ������ ��ġ�� �����ϴ� ����
-
-                if (!isPatrolTargetSet)
-                {
-                    closestPoint = FindClosestPoint(connectionPoints);
-                    isPatrolTargetSet = true;
-                }
-                if (hasReachedClosestPoint)
-                {
-                    // closestPointFloat�� ������ ���Ŀ��� ������ ���� �̵��� ����
-                    Vector2[] randomDirections = new Vector2[]
-                    {
-                        Vector2.up,
-                        Vector2.down,
-                        Vector2.left,
-                        Vector2.right
-                    };
-
-
-                    // �������� ����
-                    System.Random rng = new System.Random();
-                    randomDirections = randomDirections.OrderBy(x => rng.Next()).ToArray();
-
-                    foreach (Vector2 direction in randomDirections)
-                    {
-                        Vector2 newPosition = (Vector2)transform.position + direction;
-                        if (!IsEnemyAtPosition(newPosition) && !IsWallAtPosition(newPosition) && !walkRemember.Contains(newPosition) && !IsBlockedByWater(newPosition))
-                        {
-                            SavePosition(newPosition);                         
-                            walkRemember.Add(newPosition);
-                            AttemptMove<Player>(direction);
-                            yield return new WaitForFixedUpdate();
-                            
-                            //���� ���� �濡 �ִ���
-                            Vector2 currentPosition = new Vector2(transform.position.x, transform.position.y);
-                            foreach (Rect room in roomdata)
-                            {
-                                if (room.Contains(currentPosition))
-                                {
-                                    hasReachedClosestPoint = false;
-                                    isPatrolTargetSet = false;
-                                    break;
-                                }
-                            }
-
-                            if (Vector2.Distance(lastPosition, transform.position) < 0.01f)
-                            {
-                                Debug.LogWarning("�������� �����̴� ���� ���� ������. �ٽÿ����δ�1");
-                                walkRemember.Clear();
-                                hasReachedClosestPoint = true;
-                                GameManager.instance.EnemyTurnCompleted();
-                                yield break;
-                            }
-                            lastPosition = transform.position;
-                            GameManager.instance.EnemyTurnCompleted();
-                            yield break;
-                        }                      
-                    }
-                    if (Vector2.Distance(lastPosition, transform.position) < 0.01f)
-                    {
-                        Debug.LogWarning("��Ȯ��. 4�ٽÿ����δ�4");
-                        walkRemember.Clear();
-                        hasReachedClosestPoint = true;
-                        GameManager.instance.EnemyTurnCompleted();
-                        yield break ;
-                    }
-                    lastPosition = transform.position;
-                    GameManager.instance.EnemyTurnCompleted();//?
-                    Debug.Log("������1");
-                    yield break;
-                }
-                else
-                {
-                    Vector2 patrolDirection = GetPatrolDirection();
-                    Vector2 patrolPosition = (Vector2)transform.position + patrolDirection;
-
-                    if (IsEnemyAtPosition(patrolPosition) || IsWallAtPosition(patrolPosition) || !CanMoveDiagonally(transform.position, patrolDirection))// || !IsBlockedByWater(patrolPosition)
-                    {
-                        Vector2[] alternateDirections = GetAlternateDirections(patrolDirection);
-
-                        foreach (Vector2 altDirection in alternateDirections)
-                        {
-                            Vector2 altPosition = (Vector2)transform.position + altDirection;
-                            if (!IsEnemyAtPosition(altPosition) && !IsWallAtPosition(altPosition) && !walkRemember.Contains(altPosition) && !IsBlockedByWater(altPosition))//
-                            {
-                                SavePosition(altPosition);                              
-                                AttemptMove<Player>(altDirection);
-                                walkRemember.Add(altPosition);
-                                //yield return new WaitForFixedUpdate();�ּ�ó���غ�
-                                //GameManager.instance.EnemyTurnCompleted();
-                                if (HasReachedTarget())
-                                {
-                                    hasReachedClosestPoint = true;  // ���� �÷��� ����
-                                    GameManager.instance.EnemyTurnCompleted();//?
-                                    Debug.Log("������2");
-                                    yield break;
-                                }
-                                if (Vector2.Distance(lastPosition, transform.position) < 0.01f)
-                                {
-                                    Debug.LogWarning("������ �������� ���� ����, �����ϼ� ����. 2�ٽÿ����δ�2");
-                                    /*walkRemember.Clear();
-                                    hasReachedClosestPoint = true;*/
-                                    GameManager.instance.EnemyTurnCompleted();//?
-                                    yield break;
-                                }
-                                lastPosition = transform.position;
-                                //Debug.Log("������3");
-                                GameManager.instance.EnemyTurnCompleted();//?
-                                yield break;
-                            }
-                            
-                        }
-                        if (Vector2.Distance(lastPosition, transform.position) < 0.01f)
-                        {
-                            Debug.LogWarning("�ѹ��� ��Ȯ��. �ٽÿ����δ�5");
-                            walkRemember.Clear();
-                            hasReachedClosestPoint = true;
-                            GameManager.instance.EnemyTurnCompleted();//?
-                            yield break;
-                        }
-                        GameManager.instance.EnemyTurnCompleted();//?
-                        Debug.Log("������4");
-                        lastPosition = transform.position;
-                        yield break;
-                    }
-
-                    walkRemember.Add(patrolPosition);
-                    SavePosition(patrolPosition);
-                    AttemptMove<Player>(patrolDirection);
-                    yield return new WaitForFixedUpdate();
-                    
-                    if (HasReachedTarget())
-                    {
-                        //Debug.Log("Patrol1 target reached: " + closestPoint);
-                        hasReachedClosestPoint = true;  // ���� �÷��� ����
-                        GameManager.instance.EnemyTurnCompleted();
-                        yield break;
-                    }
-                    if (Vector2.Distance(lastPosition, transform.position) < 0.01f)
-                    {
-                        Debug.LogWarning("��� ������ �־��µ�, ������ �� ����. �ٽÿ����δ�3");
-                        walkRemember.Clear();
-                        hasReachedClosestPoint = true;
-                        GameManager.instance.EnemyTurnCompleted();
-                        yield break ;
-                    }
-                    GameManager.instance.EnemyTurnCompleted();
-                    lastPosition = transform.position;
-
-                }
-                break;
-
-        }
+        UpdateMode();
+        return IsPlayerAdjacent();
     }
 
-    private IEnumerator CheckForPlayer()
+    /// <summary>
+    /// 이번 턴의 이동. 기다리지 않는다.
+    ///
+    /// 좌표만 옮기고 끝난다. 옮긴 것이 화면에 반영되기를 기다리는 일은
+    /// 부르는 쪽이 모든 적을 옮긴 뒤 한 번만 하면 된다.
+    /// 적마다 기다리면 그 대기가 마릿수만큼 쌓여 플레이어 조작이 느려진다.
+    /// </summary>
+    public void TakeStep()
     {
-        Vector2 playerPosition = GameManager.instance.Player.transform.position;
-        Vector2 enemyPosition = transform.position;
+        if (currentMode == EnemyMode.Chase)
+            StepTowardPlayer();
+        else
+            StepPatrol();
+    }
 
-        // 1. ���� �� ĭ ��ó�� �÷��̾ �ִ��� Ȯ��
-        Vector2[] directions = {
-        Vector2.up, Vector2.down, Vector2.left, Vector2.right,
-        new Vector2(1, 1), new Vector2(-1, 1), new Vector2(1, -1), new Vector2(-1, -1)
-    };
-
-        foreach (Vector2 direction in directions)
+    /// <summary>
+    /// 이번 턴의 공격. 찌르는 연출이 있어 한 마리씩 차례로 돈다.
+    ///
+    /// 겹쳐서 때리면 누구에게 얼마나 맞았는지가 메시지창에 마지막 하나만 남는다.
+    /// 때리는 적은 플레이어에 붙어 있는 것들뿐이라 많아야 여덟이다.
+    /// </summary>
+    public IEnumerator AttackTurn()
+    {
+        // 빨리감기 중에는 연출을 건너뛰고 피해만 준다.
+        if (GameManager.FastForward)
         {
-            Vector2 checkPosition = enemyPosition + direction;
-
-            // �÷��̾ �ִ� ��ġ�� ���� ������ ��ġ���� Ȯ��
-            if (Vector2.Distance(playerPosition, checkPosition) < 0.1f && !IsWallAtPosition(checkPosition))
-            {
-                // �밢�� ������ ���, CanMoveDiagonally�� �߰� Ȯ��
-                if (Mathf.Abs(direction.x) > 0 && Mathf.Abs(direction.y) > 0)
-                {
-                    if (CanMoveDiagonally(enemyPosition, direction))
-                    {
-                        currentMode = EnemyMode.Chase;
-                        yield return StartCoroutine(AttackPlayer());
-                        yield break;
-                    }
-                }
-                else
-                {
-                    currentMode = EnemyMode.Chase;
-                    yield return StartCoroutine(AttackPlayer());
-                    yield break;
-                }
-            }
-        }
-
-        // ���� CheckForPlayer ���� ����
-        Rect currentRoom = Rect.zero;
-        foreach (Rect room in roomdata)
-        {
-            if (room.Contains(enemyPosition))
-            {
-                currentRoom = room;
-                break;
-            }
-        }
-
-        if (currentRoom != Rect.zero && currentRoom.Contains(playerPosition))
-        {
-            currentMode = EnemyMode.Chase;
-            //return;
+            StrikePlayer();
             yield break;
         }
 
-        if (currentMode == EnemyMode.Chase && Vector2.Distance(playerPosition, enemyPosition) > 15.0f)
+        yield return AttackPlayer();
+    }
+
+    /// <summary>플레이어가 보이는지에 따라 Chase / Patrol 을 오간다.</summary>
+    private void UpdateMode()
+    {
+        Vector2 playerPosition = PlayerPosition;
+
+        // 같은 방 안에 있으면 발견한 것으로 본다.
+        Rect currentRoom = FindRoomContaining(transform.position);
+        if (currentRoom != Rect.zero && currentRoom.Contains(playerPosition))
         {
-            Debug.Log("�÷��̾ ���ƽ��ϴ�. ������ �����մϴ�.");
+            currentMode = EnemyMode.Chase;
+            return;
+        }
+
+        if (currentMode != EnemyMode.Chase) return;
+
+        // 너무 멀어지거나 아예 갈 수 없게 되면 포기하고 다시 순찰한다.
+        //
+        // 직선 거리가 아니라 '실제로 몇 걸음인지'로 판단한다. 벽 하나를 사이에 두고
+        // 직선으로는 두 칸이지만 돌아가려면 서른 걸음인 경우가 흔한데,
+        // 직선 거리로 재면 그런 상대를 영영 포기하지 않고 벽만 밀게 된다.
+        if (GameManager.Chase.IsReady)
+        {
+            bool reachable = GameManager.Chase.TryGetDistance(transform.position, out int steps);
+            if (!reachable || steps > ChaseGiveUpDistance)
+            {
+                currentMode = EnemyMode.Patrol;
+                isPatrolTargetSet = false;
+            }
+            return;
+        }
+
+        if (Vector2.Distance(playerPosition, transform.position) > ChaseGiveUpDistance)
+        {
             currentMode = EnemyMode.Patrol;
             isPatrolTargetSet = false;
         }
     }
-    private IEnumerator AttackPlayer()
+
+    /// <summary>
+    /// 플레이어 쪽으로 한 걸음.
+    ///
+    /// 걸음 수 지도가 알려 주는 최단 경로를 따른다. 벽을 크게 돌아가야 하는
+    /// 지형에서도 제대로 쫓아온다. 지도가 없을 때만 예전처럼 곧장 다가간다.
+    /// </summary>
+    private void StepTowardPlayer()
     {
-        Player hitPlayer = GameManager.instance.Player.GetComponent<Player>();
-        if (hitPlayer != null)
-        {
-            yield return StartCoroutine(AttackMovement(transform.position, hitPlayer.transform.position, childTransform));
-            hitPlayer.Damaged(ThisAttack);
-            yield return new WaitForFixedUpdate();
-            GameManager.instance.EnemyTurnCompleted();
-            attacking = true;
-        }
+        if (GameManager.Chase.IsReady &&
+            TryMoveAlong(GameManager.Chase.StepsToward(transform.position), rememberPath: false))
+            return;
+
+        // 지도를 못 쓰는 상황(플레이어가 물 건너편 등)의 최후 수단.
+        TryMoveAlong(CandidateDirections(DirectionToward(PlayerPosition)), rememberPath: false);
     }
 
-    private Vector3 FindClosestPoint(List<Vector3> points)
+    private void StepPatrol()
     {
-        
-        Vector2 currentPosition = new Vector2(transform.position.x, transform.position.y);
-
-        // ���� ��ġ�� �����ϴ� Rect�� ã��
-        Rect currentRoom = Rect.zero;
-        foreach (Rect room in roomdata)
+        if (!isPatrolTargetSet)
         {
-            if (room.Contains(currentPosition))
+            patrolTarget = PickPatrolTarget();
+            isPatrolTargetSet = true;
+        }
+
+        // 목표에 이미 도착했으면 무작위로 헤맨다.
+        if (isWandering)
+        {
+            if (TryMoveAlong(Shuffled(CardinalDirections), rememberPath: true))
             {
-                currentRoom = room;
-                break;
+                // 방 안으로 들어왔으면 새 목표를 다시 고른다.
+                if (FindRoomContaining(transform.position) != Rect.zero)
+                    ResetPatrol(startWandering: false);
             }
-        }
-
-        // currentRoom�� �������� ������ (��, ���� ��ġ�� rooms�� ���Ե��� ������) �⺻�� ��ȯ
-        if (currentRoom == Rect.zero)
-        {
-            Debug.LogError("No room found containing the enemy position.");
-            return Vector3.zero;
-        }
-
-        // currentRoom ���� ������ ���� ����� connectionPoint�� ã��
-        Vector3 closestPoint = Vector3.zero;
-
-        // currentRoom ���� ������ ������ ��� connectionPoint�� ����Ʈ�� ����
-        List<Vector3> validPoints = new List<Vector3>();
-        int range = 1;
-        Rect expandedRoom = new Rect(currentRoom.xMin - range, currentRoom.yMin - range, currentRoom.width + range * 2, currentRoom.height + range * 2);
-
-        foreach (Vector3 point in points)
-        {
-            Vector2 point2D = new Vector2(point.x, point.y);
-
-            if (expandedRoom.Contains(point2D) && !walkRemember.Contains(point2D))
+            else
             {
-                validPoints.Add(point);
+                ResetPatrol(startWandering: true);
             }
+            return;
         }
 
-        // ���� ��ȿ�� ����Ʈ�� ���ٸ� walkRemember�� �ʱ�ȭ�ϰ� �ٽ� �õ�
-        if (validPoints.Count == 0)
+        Vector2 preferred = DirectionToward(patrolTarget);
+        if (!TryMoveAlong(CandidateDirections(preferred), rememberPath: true))
         {
-            Debug.LogWarning("���δ� �����ְų�, �Դ� ���Դϴ�. �ٽ� ��θ� ��Ž���մϴ�");
-            walkRemember.Clear();
-
-            foreach (Vector3 point in points)
-            {
-                Vector2 point2D = new Vector2(point.x, point.y);
-
-                if (expandedRoom.Contains(point2D))
-                {
-                    validPoints.Add(point);
-                }
-            }
+            // 어느 쪽으로도 못 갔다. 기억을 지우고 헤매기로 전환한다.
+            ResetPatrol(startWandering: true);
+            return;
         }
 
-        // ��ȿ�� ����Ʈ�� �߿��� �������� �ϳ��� ����
-        if (validPoints.Count > 0)
-        {
-            System.Random rng = new System.Random();
-            closestPoint = validPoints[rng.Next(validPoints.Count)];
-        }
-        else
-        {
-            Debug.LogError("No valid points found even after clearing walkRemember.");
-            return Vector3.zero; // �� ��쿣 �⺻���� ��ȯ
-        }
-
-        return closestPoint;
-
+        if (HasReachedPatrolTarget())
+            isWandering = true;
     }
 
-    private Vector2[] GetAlternateDirections(Vector2 direction)
+    private void ResetPatrol(bool startWandering)
     {
-        if (direction.x != 0 && direction.y != 0)
-        {
-            return new Vector2[]
-            {
-                new Vector2(direction.x, 0),
-                new Vector2(0, direction.y)
-            };
-        }
-        return new Vector2[]
-        {
-            new Vector2(-direction.x, direction.y),
-            new Vector2(direction.x, -direction.y),
-            new Vector2(-direction.x, -direction.y)
-        };
+        visited.Clear();
+        isWandering = startWandering;
+        isPatrolTargetSet = false;
     }
 
-    // �̵� �Ϸ� �� ��ġ�� �����ϴ� �޼���
-    private void SavePosition(Vector2 position)
+    /// <summary>
+    /// 후보 방향을 순서대로 시도해서, 처음으로 갈 수 있는 칸으로 옮긴다.
+    ///
+    /// Chase / Patrol / 배회 / 우회가 전부 이 메서드 하나를 쓴다.
+    /// 예전에 네 벌로 복사돼 있던 부분이다.
+    /// </summary>
+    private bool TryMoveAlong(IEnumerable<Vector2> directions, bool rememberPath)
     {
-        GameManager.instance.enemyPositions.Add(position);
-    }
+        Vector2 origin = transform.position;
 
-    public Vector2 GetDirectionToPlayer()
-    {
-        //Vector2 playerPosition = target.position;
-        Vector2 playerPosition = GameManager.instance.Player.transform.position;
-        Vector2 enemyPosition = transform.position;
-
-        // �켱 �÷��̾���� �Ÿ��� ���
-        float distanceToPlayer = Vector2.Distance(playerPosition, enemyPosition);
-
-        if (distanceToPlayer <= 0.5f)
+        foreach (Vector2 direction in directions)
         {
-            // �÷��̾ ��ó�� �ִ� ��� ������ �õ�
-            return Vector2.zero; // �̵����� �ʰ� ����
-        }
+            Vector2 destination = origin + direction;
+            if (!CanOccupy(destination, direction, rememberPath)) continue;
 
-        float xDir = 0;
-        float yDir = 0;
+            // 같은 턴의 다른 적이 이 칸을 노리지 않도록 미리 찜해 둔다.
+            GameManager.instance.enemyPositions.Add(destination);
+            if (rememberPath) visited.Add(destination);
 
-        if (Mathf.Abs(playerPosition.y - enemyPosition.y) < float.Epsilon)
-        {
-            // �÷��̾�� ���� y�࿡ ���� ��, x������ �̵�
-            xDir = playerPosition.x > enemyPosition.x ? 1 : -1;
-        }
-        else if (Mathf.Abs(playerPosition.x - enemyPosition.x) < float.Epsilon)
-        {
-            // �÷��̾�� ���� x�࿡ ���� ��, y������ �̵�
-            yDir = playerPosition.y > enemyPosition.y ? 1 : -1;
-        }
-        else
-        {
-            // �밢������ �̵�
-            xDir = playerPosition.x > enemyPosition.x ? 1 : -1;
-            yDir = playerPosition.y > enemyPosition.y ? 1 : -1;
-        }
-
-        return new Vector2(xDir, yDir);
-    }
-    private bool HasReachedTarget()
-    {
-        //return Vector2.Distance(transform.position, closestPoint) < 0.3f;
-        //return Vector2.Distance(this.transform.position, closestPoint) == 0;
-        //return Mathf.Approximately(Vector2.Distance(transform.position, closestPoint), 0);
-        return Mathf.Approximately(Vector2.Distance((Vector2)transform.position, (Vector2)closestPoint), 0);
-
-    }
-    private Vector2 GetPatrolDirection()
-    {
-        Vector2 enemyPosition = transform.position;
-
-        float xDir = 0;
-        float yDir = 0;
-
-        if (Mathf.Abs(closestPoint.y - enemyPosition.y) < float.Epsilon)
-        {
-            // ���� y�࿡ ���� ��, x������ �̵�
-            xDir = closestPoint.x > enemyPosition.x ? 1 : -1;
-        }
-        else if (Mathf.Abs(closestPoint.x - enemyPosition.x) < float.Epsilon)
-        {
-            // ���� x�࿡ ���� ��, y������ �̵�
-            yDir = closestPoint.y > enemyPosition.y ? 1 : -1;
-        }
-        else
-        {
-            // �밢������ �̵�
-            xDir = closestPoint.x > enemyPosition.x ? 1 : -1;
-            yDir = closestPoint.y > enemyPosition.y ? 1 : -1;
-        }
-
-        return new Vector2(xDir, yDir);
-    }
-
-    protected override void onCantMove<T>(T component)
-    {
-        Player hitPlayer = component as Player;
-
-        if (hitPlayer != null)
-        {
-            StartCoroutine(AttackMovement(transform.position, hitPlayer.transform.position, childTransform));
-            
-            hitPlayer.Damaged(ThisAttack);
-            //Debug.Log("Player Damaged!");
-        }
-    }
-
-    private bool IsEnemyAtPosition(Vector2 position)
-    {
-
-        foreach (Vector2 enemyPosition in GameManager.instance.enemyPositions)
-        {
-            if (Vector2.Distance(position, enemyPosition) < 0.1f) // �ݰ� 0.1f ���� �ٸ� ���� �ִ� ���
-            {
-                return true;
-            }
+            Move(direction, out _);
+            return true;
         }
 
         return false;
     }
-    private bool IsWallAtPosition(Vector2 position)
+
+    private bool CanOccupy(Vector2 destination, Vector2 direction, bool rememberPath)
     {
-        return IsBlockedByTile(position);
+        if (IsEnemyAt(destination)) return false;
+        if (IsBlockedByTile(destination)) return false;
+        if (IsBlockedByWater(destination)) return false;
+        if (!CanMoveDiagonally(transform.position, direction)) return false;
+        if (rememberPath && visited.Contains(destination)) return false;
+        return true;
     }
 
-    public override void SetStats(int SetHp, int SetAttack, int SetDefense)
+    /// <summary>
+    /// 가고 싶은 방향을 먼저, 막혔을 때의 우회 방향을 그다음에 내놓는다.
+    ///
+    /// 예전에는 축 방향일 때의 우회 계산이 잘못돼 있었다.
+    /// preferred 가 (1,0) 이면 (-x,y)=(-1,0), (x,-y)=(1,0), (-x,-y)=(-1,0) 이 되어
+    /// 사실상 '뒤로' 만 두 번 시도했고, 수직 방향은 한 번도 시도하지 않았다.
+    /// 벽 하나만 앞을 막아도 적이 그대로 멈춰 서던 원인이다.
+    /// </summary>
+    private static IEnumerable<Vector2> CandidateDirections(Vector2 preferred)
     {
-        //base.SetStats(SetHp, SetAttack, SetDefense);
-        ThisHp = SetHp;
-        ThisAttack = SetAttack;
-        ThisDefense = SetDefense;
+        yield return preferred;
+
+        if (preferred.x != 0 && preferred.y != 0)
+        {
+            // 대각선이 막혔으면 가로/세로로 나눠서 시도한다.
+            yield return new Vector2(preferred.x, 0);
+            yield return new Vector2(0, preferred.y);
+            yield break;
+        }
+
+        // 축 방향이면 좌우(수직)로 비켜 본 뒤, 그래도 안 되면 뒤로 물러난다.
+        var perpendicular = new Vector2(preferred.y, preferred.x);
+        yield return perpendicular;
+        yield return -perpendicular;
+        yield return -preferred;
     }
-    public void Damaged(int PlayerPower)
+
+    private static IEnumerable<Vector2> Shuffled(Vector2[] source)
     {
-
-        int randomFactor = UnityEngine.Random.Range(-1, 3); // -1���� +2 ������ ���� ��
-        if (UnityEngine.Random.value < 0.9f)
+        var list = new List<Vector2>(source);
+        for (int i = list.Count - 1; i > 0; i--)
         {
-            int baseDamage = Math.Max((PlayerPower - ThisDefense) + randomFactor, 1);
-            
-            if (UnityEngine.Random.value < 0.1f)
-            {
-                baseDamage = (int)Math.Round(baseDamage * 1.8);//1.8 ũ��Ƽ�� ������
-                StartCoroutine(GameManager.instance.ShowDamagedTextBox(null, baseDamage, 2));
-                ThisHp -= baseDamage;
-                
-                return;
-            }
-            StartCoroutine(GameManager.instance.ShowDamagedTextBox(null, baseDamage, 3));
-            ThisHp -= baseDamage;
+            int j = Random.Range(0, i + 1);
+            (list[i], list[j]) = (list[j], list[i]);
         }
-        else
+        return list;
+    }
+
+    /// <summary>
+    /// 목표 쪽으로 한 칸 가려면 어느 방향인지.
+    /// 축이 맞으면 직선으로, 아니면 대각선으로 접근한다.
+    ///
+    /// 예전에는 GetDirectionToPlayer 와 GetPatrolDirection 이 목표만 다르고
+    /// 내용은 똑같은 채로 따로 있었다.
+    /// </summary>
+    private Vector2 DirectionToward(Vector2 target)
+    {
+        Vector2 origin = transform.position;
+        float dx = target.x - origin.x;
+        float dy = target.y - origin.y;
+
+        // 같은 줄에 있으면 그 축으로만, 아니면 대각선으로 간다.
+        if (Mathf.Abs(dy) < float.Epsilon) return new Vector2(Mathf.Sign(dx), 0f);
+        if (Mathf.Abs(dx) < float.Epsilon) return new Vector2(0f, Mathf.Sign(dy));
+
+        return new Vector2(Mathf.Sign(dx), Mathf.Sign(dy));
+    }
+
+    // ── 순찰 목표 고르기 ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 지금 있는 방에서 나갈 수 있는 통로 지점 중 하나를 무작위로 고른다.
+    /// 이미 지나온 곳만 남았으면 기억을 지우고 다시 고른다.
+    /// </summary>
+    private Vector3 PickPatrolTarget()
+    {
+        Rect currentRoom = FindRoomContaining(transform.position);
+        if (currentRoom == Rect.zero)
         {
-            StartCoroutine(GameManager.instance.ShowDamagedTextBox(null, 0, 1));
+            // 통로 한가운데 있는 경우. 다음 턴에 다시 시도한다.
+            return transform.position;
         }
 
+        var expanded = new Rect(
+            currentRoom.xMin - PatrolSearchMargin,
+            currentRoom.yMin - PatrolSearchMargin,
+            currentRoom.width + PatrolSearchMargin * 2,
+            currentRoom.height + PatrolSearchMargin * 2);
+
+        List<Vector3> candidates = CollectExits(expanded, excludeVisited: true);
+        if (candidates.Count == 0)
+        {
+            visited.Clear();
+            candidates = CollectExits(expanded, excludeVisited: false);
+        }
+
+        if (candidates.Count == 0)
+            return transform.position;
+
+        return candidates[Random.Range(0, candidates.Count)];
+    }
+
+    private List<Vector3> CollectExits(Rect area, bool excludeVisited)
+    {
+        var result = new List<Vector3>();
+
+        foreach (Vector3 point in connectionPoints)
+        {
+            var point2D = new Vector2(point.x, point.y);
+            if (!area.Contains(point2D)) continue;
+            if (excludeVisited && visited.Contains(point2D)) continue;
+            result.Add(point);
+        }
+
+        return result;
+    }
+
+    private bool HasReachedPatrolTarget()
+    {
+        return Mathf.Approximately(
+            Vector2.Distance(transform.position, patrolTarget), 0f);
+    }
+
+    private Rect FindRoomContaining(Vector2 position)
+    {
+        foreach (Rect room in roomdata)
+        {
+            if (room.Contains(position))
+                return room;
+        }
+        return Rect.zero;
+    }
+
+    // ── 전투 ───────────────────────────────────────────────────────────────
+
+    /// <summary>바로 옆(대각선 포함)에 플레이어가 있고, 실제로 닿을 수 있는가.</summary>
+    private bool IsPlayerAdjacent()
+    {
+        Vector2 origin = transform.position;
+        Vector2 playerPosition = PlayerPosition;
+
+        foreach (Vector2 direction in EightDirections)
+        {
+            Vector2 checkPosition = origin + direction;
+
+            if (Vector2.Distance(playerPosition, checkPosition) >= SameCellThreshold) continue;
+            if (IsBlockedByTile(checkPosition)) continue;
+
+            bool isDiagonal = Mathf.Abs(direction.x) > 0 && Mathf.Abs(direction.y) > 0;
+            if (isDiagonal && !CanMoveDiagonally(origin, direction)) continue;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private IEnumerator AttackPlayer()
+    {
+        currentMode = EnemyMode.Chase;
+
+        var player = GameManager.instance.Player.GetComponent<Player>();
+        if (player == null) yield break;
+
+        // 플레이어는 바로 옆 칸에 있으므로 그 차이가 곧 찌르는 방향이다.
+        Vector2 toPlayer = (Vector2)(player.transform.position - transform.position);
+
+        yield return LungeTowards(toPlayer);
+        player.Damaged(attackPower, transform.position);
+        yield return new WaitForFixedUpdate();
+    }
+
+    /// <summary>연출 없이 피해만 준다. 빨리감기 중에 쓴다.</summary>
+    private void StrikePlayer()
+    {
+        currentMode = EnemyMode.Chase;
+
+        var player = GameManager.instance.Player.GetComponent<Player>();
+        if (player != null) player.Damaged(attackPower, transform.position);
+    }
+
+    private bool IsEnemyAt(Vector2 position)
+    {
+        foreach (Vector2 reserved in GameManager.instance.enemyPositions)
+        {
+            if (Vector2.Distance(position, reserved) < SameCellThreshold)
+                return true;
+        }
+        return false;
+    }
+
+    public override void SetStats(int hp, int attack, int defenseValue)
+    {
+        ThisHp = hp;
+        maxHp = hp;
+        attackPower = attack;
+        defense = defenseValue;
+    }
+
+    // ── 원거리로 날아온 것에 맞았을 때 ──────────────────────────────────────
+
+    /// <summary>
+    /// 회피도 치명타도 없이 그대로 들어오는 피해. 던진 물건이나 원거리 공격용.
+    /// 방어력만큼은 줄어들되 최소 1은 들어간다.
+    /// </summary>
+    public void TakeDirectDamage(int amount)
+    {
+        int damage = Mathf.Max(amount - defense, 1);
+        ThisHp -= damage;
+
+        GameManager.instance.ShowMessage(GameMessage.ThrownItemHitEnemy, DisplayName, damage);
         CheckDead();
     }
+
+    /// <summary>
+    /// 방어력을 무시하고 그대로 들어가는 피해.
+    ///
+    /// TakeDirectDamage 는 이름과 달리 방어력을 빼고 있어서(amount - defense),
+    /// "방어력 무시" 가 필요한 곳에는 쓸 수 없다. 돈을 던져 맞히는 것이 그 경우다.
+    /// </summary>
+    public void TakeTrueDamage(int amount)
+    {
+        int damage = Mathf.Max(amount, 0);
+        if (damage <= 0) return;
+
+        ThisHp -= damage;
+
+        GameManager.instance.ShowMessage(GameMessage.ThrownItemHitEnemy, DisplayName, damage);
+        CheckDead();
+    }
+
+    /// <summary>회복 아이템을 맞았다. 적을 치료해 버린다.</summary>
+    public void HealBy(int amount)
+    {
+        ThisHp = Mathf.Min(ThisHp + amount, maxHp);
+        GameManager.instance.ShowMessage(GameMessage.ThrownItemHealedEnemy, DisplayName);
+    }
+
+    /// <summary>능력치 상승 아이템을 맞았다. 적이 강해진다.</summary>
+    public void RaiseAttackBy(int amount)
+    {
+        attackPower += amount;
+        GameManager.instance.ShowMessage(GameMessage.ThrownItemBuffedEnemy, DisplayName);
+    }
+
+    /// <summary>메시지에 쓰는 이름. 프리팹 복제본 표시를 뗀 것.</summary>
+    public string DisplayName => gameObject.name.Replace("(Clone)", string.Empty);
+
+    // ── 정체를 숨기고 있는가 ───────────────────────────────────────────────
+    //
+    // 아직 이렇게 되는 적은 없다. 조준이 "보이는 적만 겨눈다" 는 규칙을 지키려면
+    // 먼저 '보이지 않는 상태' 라는 개념이 있어야 해서 자리를 만들어 두었다.
+    // 변장한 적과 투명한 적을 실제로 만들 때 이 값을 켜면 조준은 저절로 비켜 간다.
+
+    /// <summary>아이템인 척하고 있는가. 밟거나 때리기 전까지는 적인 줄 모른다.</summary>
+    public bool IsDisguised { get; set; }
+
+    /// <summary>모습이 보이지 않는가.</summary>
+    public bool IsInvisible { get; set; }
+
+    /// <summary>
+    /// 조준으로 겨눌 수 있는가.
+    ///
+    /// 정체를 숨긴 적을 조준이 집어 주면 그것만으로 정체가 드러난다.
+    /// 화살표가 아이템 쪽으로 홱 도는 순간 "저건 적이구나" 를 알게 되기 때문이다.
+    /// 숨는 적을 두는 의미가 사라지므로 조준 대상에서 뺀다.
+    /// </summary>
+    public bool CanBeAimedAt => !IsDisguised && !IsInvisible;
+
+    /// <summary>플레이어에게 맞았을 때.</summary>
+    public void Damaged(int playerAttack)
+    {
+        if (Random.value >= HitChance)
+        {
+            GameManager.instance.ShowMessage(GameMessage.AttackMissed);
+            return;
+        }
+
+        int randomFactor = Random.Range(-1, 3);
+        int damage = Mathf.Max((playerAttack - defense) + randomFactor, 1);
+
+        bool isCritical = Random.value < CriticalChance;
+        if (isCritical)
+            damage = (int)System.Math.Round(damage * CriticalMultiplier);
+
+        ThisHp -= damage;
+
+        GameManager.instance.ShowMessage(
+            isCritical ? GameMessage.CriticalHit : GameMessage.EnemyDamaged,
+            amount: damage);
+
+        // 예전에는 치명타일 때 여기서 곧바로 return 해 버려서
+        // 치명타로 적을 죽여도 사망 처리와 경험치 지급이 되지 않았다.
+        CheckDead();
+    }
+
     private void CheckDead()
     {
-        if (ThisHp <= 0)
-        {
-            gameObject.name = gameObject.name.Replace("(Clone)", "");
-            string itemName = gameObject.name; // ������ �̸� ���
+        if (ThisHp > 0) return;
 
-            StartCoroutine(GameManager.instance.ShowDamagedTextBox(itemName, (ThisAttack+ThisDefense), 8));
-            GameManager.instance.RemoveEnemyList(this);
-            //StartCoroutine(GameManager.instance.MoveEnemies());
-            gameObject.SetActive(false);
-            //Destroy(gameObject);
-            //return;
-        }
-        //StartCoroutine(GameManager.instance.MoveEnemies());
+        string enemyName = gameObject.name.Replace("(Clone)", string.Empty);
+        gameObject.name = enemyName;
+
+        GameManager.instance.RemoveEnemyList(this);
+        GameManager.instance.RewardForKill(enemyName, attackPower + defense);
+
+        gameObject.SetActive(false);
     }
 }

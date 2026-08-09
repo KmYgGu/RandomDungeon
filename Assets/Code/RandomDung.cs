@@ -1,737 +1,166 @@
-using System.Collections;
-using System.Collections.Generic;
+ï»¿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Tilemaps;
-using UnityEngine.SceneManagement;
 
+/// <summary>
+/// í•œ ì¸µì„ ë§Œë“œëŠ” ìˆœì„œë¥¼ ì •í•˜ëŠ” ì—­í• .
+///
+/// ì˜ˆì „ì—ëŠ” ì´ í´ë˜ìŠ¤ í•˜ë‚˜ê°€ 720ì¤„ì´ì—ˆê³  ë°© ë°°ì¹˜, í†µë¡œ íŒŒê¸°, ë¬¼ê¸¸, íƒ€ì¼ ì¹ í•˜ê¸°,
+/// ëª¬ìŠ¤í„°Â·ì•„ì´í…œÂ·ê³„ë‹¨Â·í•¨ì • ë°°ì¹˜ë¥¼ ì „ë¶€ ì§ì ‘ í•˜ê³  ìˆì—ˆë‹¤.
+/// ì§€ê¸ˆì€ ì•„ë˜ ë„¤ í˜‘ë ¥ ê°ì²´ë¥¼ ìˆœì„œëŒ€ë¡œ ë¶€ë¥´ê¸°ë§Œ í•œë‹¤.
+///
+///   RoomLayoutBuilder  - ë°©ì„ ì–´ë””ì— ë†“ì„ì§€
+///   DungeonTilePainter - íƒ€ì¼ë§µì— ì¹ í•˜ê¸°
+///   CorridorCarver     - ë°©ì„ ì‡ëŠ” í†µë¡œì™€ ë¬¼ê¸¸
+///   DungeonPopulator   - ê³„ë‹¨ / ì•„ì´í…œ / ëª¬ìŠ¤í„° / í•¨ì • / í”Œë ˆì´ì–´
+///
+/// Inspector ë¡œ ì„¤ì •í•˜ëŠ” ê°’ë“¤ì€ ì´ë¦„ì„ ê·¸ëŒ€ë¡œ ë‘ì–´ ì”¬ì˜ ì—°ê²°ì´ ìœ ì§€ëœë‹¤.
+/// </summary>
 public class RandomDung : MonoBehaviour
 {
+    /// <summary>ì¸µ ì „ì²´ê°€ ë¬¼ë¡œ ì ê¸¸ í™•ë¥ .</summary>
+    private const float FloodedStageChance = 0.1f;
+
+    [Header("ë§µ í¬ê¸°")]
     public int mapWidth;
     public int mapHeight;
+
+    [Header("ë°© í¬ê¸°")]
     public int minRoomSize;
     public int maxRoomSize;
 
+    [Header("í”„ë¦¬íŒ¹")]
     public GameObject playerPrefab;
     public GameObject monsterPrefab;
     public GameObject[] itemPrefabs;
-
-    // °¢ ¾ÆÀÌÅÛ¿¡ ´ëÇÑ °¡ÁßÄ¡ ¼³Á¤
-    public float[] itemWeights = { 5f, 5f, 5f, 2f, 1f }; // °¡ÁßÄ¡ ¹è¿­
-
     public GameObject[] trapPrefabs;
     public GameObject stairsPrefab;
 
+    /// <summary>itemPrefabs ì™€ ê°™ì€ ìˆœì„œë¡œ ëŒ€ì‘í•˜ëŠ” ë“±ì¥ ê°€ì¤‘ì¹˜.</summary>
+    public float[] itemWeights = { 5f, 5f, 5f, 2f, 1f };
+
+    [Header("íƒ€ì¼ë§µ")]
     public Tilemap floorTilemap;
     public Tilemap Minimap;
 
+    [Header("íƒ€ì¼")]
     public TileBase floorTile;
     public TileBase floorTile2;
-    public TileBase EntranceTile;
     public TileBase wallTile;
     public TileBase waterTile;
     public TileBase minimapTile;
 
+    /// <summary>ë°©ì˜ ì¶œì…êµ¬(ë¬¸)ì— ì¹ í•  íƒ€ì¼. ë°˜ë“œì‹œ í†µí–‰ ê°€ëŠ¥í•œ íƒ€ì¼ì´ì–´ì•¼ í•œë‹¤.</summary>
+    public TileBase EntranceTile;
+
+    [Header("ë°©ë§ˆë‹¤ ë°°ì¹˜í•  ê°œìˆ˜")]
     public int minMonstersPerRoom;
     public int maxMonstersPerRoom;
     public int minItemsPerRoom;
     public int maxItemsPerRoom;
 
-
-    public float minDistanceBetweenItemsAndStairs = 0.5f; // °è´Ü ¿·¿¡ ¾ÆÀÌÅÛ »ı¼ºµÇ´Â ¹æÁö °Å¸®
+    [Header("ìµœì†Œ ê°„ê²©")]
+    public float minDistanceBetweenItemsAndStairs = 0.5f;
     public float minDistanceBetweenTrapsAndStairs = 0.5f;
     public float minDistanceBetweenTrapsAndItems = 0.5f;
 
-    public List<Rect> rooms = new List<Rect>();
+    private DungeonLayout layout = new DungeonLayout();
+    private DungeonPopulator populator;
 
-    //private bool PlayerSpownd = false;
+    /// <summary>ì ì´ ìˆœì°° ëª©í‘œë¡œ ì‚¼ëŠ” ì§€ì ë“¤ = ëª¨ë“  ë°©ì˜ ë¬¸.</summary>
+    public List<Vector3> edgePoints { get; private set; } = new List<Vector3>();
 
-    private List<Vector3> itemPositions = new List<Vector3>();
-    // ÇÊµå¿¡ Ãß°¡µÈ ¿òÁ÷ÀÌ´Â ¿ÀºêÁ§Æ® ¸®½ºÆ®
-    private List<Vector3Int> movingObjects = new List<Vector3Int>();
-    // ¹æÀÌ ¿¬°áµÈ °÷ÀÎÁö È®ÀÎ
-    public List<Vector3Int> connectionPoints = new List<Vector3Int>();
-    private Vector3Int stairsPosition;
+    /// <summary>ì ì´ "ë°© ì•ˆì— ìˆëŠ”ì§€" íŒì •í•  ë•Œ ì“°ëŠ” ë°© ì•ˆìª½ ì˜ì—­ë“¤.</summary>
+    public List<Rect> RoomData { get; private set; } = new List<Rect>();
 
-    public List<Rect> RoomData = new List<Rect>();
-    public List<Vector3> edgePoints = new List<Vector3>();
+    public Vector3Int GetStairsPosition() => populator != null ? populator.StairsPosition : default;
 
+    /// <summary>í•œ ì¸µì„ ì²˜ìŒë¶€í„° ëê¹Œì§€ ë§Œë“ ë‹¤.</summary>
     public void GenerateDungeon()
     {
-        // Ãş ¼ö¿¡ µû¶ó ÃÖ´ë ¹æ °¹¼ö ¼³Á¤ (¿¹: 1Ãş = ÃÖ´ë 2°³, 50Ãş = ÃÖ´ë 15°³)
-        int baseRooms = Mathf.Clamp(GameManager.Stage * 2, 1, 15);
-        int randomAdditionalRooms = Random.Range(0, 4); // 0ºÎÅÍ 3±îÁöÀÇ ¹«ÀÛÀ§ÇÑ °ª Ãß°¡
-        int maxRooms = baseRooms + randomAdditionalRooms;
+        int stage = GameManager.Stage;
 
+        DungeonTilePainter painter = BuildPainter();
+        painter.Clear();
 
+        layout = new DungeonLayout();
+        populator = new DungeonPopulator(
+            painter, GameManager.Ground,
+            itemPrefabs, itemWeights, trapPrefabs,
+            monsterPrefab, stairsPrefab, playerPrefab);
+
+        // 1. ë°©ì„ í©ë¿Œë¦¬ê³ (ì¼ë¶€ëŠ” ë³´ë¬¼ë°©Â·ëª¬ìŠ¤í„° í•˜ìš°ìŠ¤ë¡œ ì •í•´ì§„ë‹¤) ë°”ë‹¥ì„ ì¹ í•œë‹¤.
+        new RoomLayoutBuilder(mapWidth, mapHeight, minRoomSize, maxRoomSize)
+            .Build(layout, stage);
+
+        foreach (RoomInfo room in layout.Rooms)
+            PaintRoomFloor(painter, room);
+
+        // 2. ë°©ë§ˆë‹¤ ë¬¸ì„ ëš«ê³  ë¬¸ê³¼ ë¬¸ ì‚¬ì´ë¥¼ í†µë¡œë¡œ ì‡ëŠ”ë‹¤.
+        //    ìµœì†Œ ì‹ ì¥ íŠ¸ë¦¬ê°€ ëª¨ë“  ë°©ì˜ ì—°ê²°ì„ ë³´ì¥í•˜ê³ , ê·¸ ìœ„ì— ë£¨í”„ê°€ ì–¹íŒë‹¤.
+        new CorridorCarver(painter, layout).ConnectRooms(stage);
+
+        // 3. í†µë¡œê°€ ë‚˜ë€íˆ ë¶™ì–´ í­ 2ì¹¸ì´ ëœ ê³³ì„ 1ì¹¸ìœ¼ë¡œ ê¹ì•„ ë‚¸ë‹¤.
+        //    ë°˜ë“œì‹œ ë¬¼ê¸¸Â·ë²½ ë©”ìš°ê¸°ë³´ë‹¤ ë¨¼ì € í•´ì•¼ í•œë‹¤. ê¹ì•„ ë‚¸ ì¹¸ì´ ë¹ˆì¹¸ìœ¼ë¡œ
+        //    ë‚¨ì•„ ìˆì–´ì•¼ ë²½ìœ¼ë¡œ ë©”ì›Œì§€ê¸° ë•Œë¬¸ì´ë‹¤.
+        new CorridorThinner(painter, layout)
+            .Thin(new TilemapWalkableGrid(floorTilemap), mapWidth, mapHeight);
+
+        // 4. ë¬¼ê¸¸(ì¥ì‹).
+        new WaterwayDecorator(painter, layout).Decorate();
+
+        // 5. ì•„ì§ ë¹ˆ ì¹¸ì„ ë²½(ë“œë¬¼ê²Œ ë¬¼)ìœ¼ë¡œ ë©”ìš´ë‹¤.
+        painter.FillEmptySpace(mapWidth, mapHeight, Random.value < FloodedStageChance);
+
+        // 6. ì ì´ ì“¸ ì •ë³´ë¥¼ ë„˜ê²¨ ì¤€ë‹¤. í†µë¡œë¥¼ ë‹¤ íŒ ë’¤ë¼ì•¼ ë¬¸ì´ í™•ì •ëœë‹¤.
+        RoomData = layout.InteriorRects();
+        edgePoints = layout.DoorWorldPositions();
+
+        // 7. ê³„ë‹¨ì„ ë¨¼ì € ì •í•œë‹¤. ì•„ì´í…œ ë°°ì¹˜ê°€ ê³„ë‹¨ ìœ„ì¹˜ë¥¼ í”¼í•´ì•¼ í•˜ê¸° ë•Œë¬¸ì´ë‹¤.
+        //    (ì˜ˆì „ì—ëŠ” ì•„ì´í…œì„ ë¨¼ì € ë†“ì•„ì„œ, ê³„ë‹¨ê³¼ì˜ ê±°ë¦¬ ê²€ì‚¬ê°€ í•­ìƒ
+        //     ì•„ì§ ì •í•´ì§€ì§€ ì•Šì€ (0,0) ê³¼ ë¹„êµë˜ì–´ ì‚¬ì‹¤ìƒ ë™ì‘í•˜ì§€ ì•Šì•˜ë‹¤.)
+        populator.PlaceStairs(layout);
+
+        // 8. ë°©ë§ˆë‹¤ ì•„ì´í…œê³¼ ëª¬ìŠ¤í„°ë¥¼ ë†“ëŠ”ë‹¤.
+        foreach (RoomInfo room in layout.Rooms)
+        {
+            populator.PopulateRoom(
+                room,
+                Random.Range(minItemsPerRoom, maxItemsPerRoom + 1),
+                Random.Range(minMonstersPerRoom, maxMonstersPerRoom + 1),
+                stage,
+                minDistanceBetweenItemsAndStairs);
+        }
+
+        // 9. ì²« ì¸µì´ë¼ë©´ í”Œë ˆì´ì–´ë¥¼ ë§Œë“ ë‹¤.
+        if (GameManager.instance.Player == null)
+            GameManager.instance.Player = populator.PlacePlayer(layout);
+
+        // 10. í•¨ì •.
+        populator.PlaceTraps(layout, minDistanceBetweenTrapsAndStairs, minDistanceBetweenTrapsAndItems);
+    }
+
+    private DungeonTilePainter BuildPainter()
+    {
+        // ì”¬ì„ ìƒˆë¡œ ë¶ˆëŸ¬ì˜¬ ë•Œë§ˆë‹¤ íƒ€ì¼ë§µ ì¸ìŠ¤í„´ìŠ¤ê°€ ë°”ë€Œë¯€ë¡œ ë§¤ë²ˆ ë‹¤ì‹œ ì°¾ëŠ”ë‹¤.
         floorTilemap = GameObject.Find("FloorMap").GetComponent<Tilemap>();
         Minimap = GameObject.Find("MniMap").GetComponent<Tilemap>();
-        GameManager.tilemap = GameObject.Find("FloorMap").GetComponent<Tilemap>();
+        GameManager.FloorTilemap = floorTilemap;
 
-        rooms.Clear();
-        itemPositions.Clear();
-        movingObjects.Clear();
-        edgePoints.Clear();
-        connectionPoints.Clear();
-        RoomData.Clear();
-
-        floorTilemap.ClearAllTiles();
-        Minimap.ClearAllTiles();
-
-
-        //¹æ »ı¼º±â
-        for (int i = 0; i < maxRooms; i++)
-        {
-            int roomWidth = Random.Range(minRoomSize, maxRoomSize);
-            int roomHeight = Random.Range(minRoomSize, maxRoomSize);
-
-            int x = Random.Range(0, mapWidth - roomWidth);
-            int y = Random.Range(0, mapHeight - roomHeight);
-
-            Rect newRoom = new Rect(x, y, roomWidth, roomHeight);//±âÁ¸ ¹æ¸¸µé±â
-
-            //¹æÀÌ °ãÃÄ¼­ »ı¼ºµÇÁö ¾Ê°Ô
-            bool overlaps = false;
-
-            // ¹æ ¸®½ºÆ®°¡ ºñ¾îÀÖÁö ¾ÊÀ» ¶§¿¡¸¸ ·çÇÁ ½ÇÇà
-            if (rooms.Count > 0)
-            {
-                foreach (Rect room in rooms)
-                {
-                    if (newRoom.Overlaps(room))
-                    {
-                        overlaps = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!overlaps && IsDistanceValid(newRoom, rooms, 6))  // ÃÖ¼Ò 6(5)°³ÀÇ ¿ÀºêÁ§Æ® °Å¸®¸¦ º¸Á¤
-            {
-                Rect RoomDataTilepos = new Rect(x + 1.5f, y + 1.5f, roomWidth - 1, roomHeight - 1);
-                RoomData.Add(RoomDataTilepos);
-
-                rooms.Add(newRoom);
-                CreateRoom(newRoom);
-
-                int numMonsters = Random.Range(minMonstersPerRoom, maxMonstersPerRoom + 1);
-                //int numMonsters = 1;
-
-
-                int numItems = Random.Range(minItemsPerRoom, maxItemsPerRoom + 1);
-                SpawnItems(newRoom, numItems, numMonsters);
-            }
-        }
-
-        // ¹æ ¿¬°á
-        ConnectRooms();
-
-        // ¸ğµç ¿µ¿ªÀ» Floor PrefabÀ¸·Î Ã¤¿ì±â
-        FillMapWithWalls();
-
-        // ½ºÆù ÇÃ·¹ÀÌ¾î
-        if (GameManager.instance.Player == null)//playerPositions.Count == 0
-        {
-            Rect randomRoom = rooms[Random.Range(0, rooms.Count)];
-            Vector3Int playerSpawnPosition = GetRandomPositionInRoom(randomRoom);
-            bool isColliding;
-
-            do
-            {
-                // ¹«ÀÛÀ§ À§Ä¡ ¼±ÅÃ
-                randomRoom = rooms[Random.Range(0, rooms.Count)];
-                playerSpawnPosition = GetRandomPositionInRoom(randomRoom);
-                // ¿òÁ÷ÀÌ´Â ¿ÀºêÁ§Æ® ¸®½ºÆ®¸¦ Ã¼Å©ÇÏ¿© Ãæµ¹ È®ÀÎ
-                isColliding = IsCollidingWithMovingObjects(playerSpawnPosition);
-            }
-            while (isColliding);
-
-            // Ãæµ¹ÇÏÁö ¾Ê´Â À§Ä¡¸¦ Ã£¾ÒÀ» °æ¿ì ÇÃ·¹ÀÌ¾î »ı¼º
-            GameManager.instance.Player = Instantiate(playerPrefab, ApplyTilemapOffset(playerSpawnPosition, floorTilemap), Quaternion.identity);
-
-            // ¿òÁ÷ÀÌ´Â ¿ÀºêÁ§Æ® ¸®½ºÆ®¿¡ À§Ä¡ Ãß°¡
-            movingObjects.Add(playerSpawnPosition);
-        }
-        
-        // °è´Ü »ı¼º
-        SpawnStairsInRandomRoom();
-
-        // ÇÔÁ¤ »ı¼º
-        GenerateTraps();
-
-    }
-    //Å¸ÀÏ¸ÊÀÇ Áß½É ¾È¿¡ »ı¼ºµÇ±â À§ÇØ ±âÁ¸ ÁÂÇ¥¿¡´Ù º¸Á¤Ä¡ Ãß°¡
-    Vector3 ApplyTilemapOffset(Vector3Int cellPosition, Tilemap tilemap)
-    {
-        Vector3 worldPosition = tilemap.CellToWorld(cellPosition);
-        worldPosition.x += 0.5f;
-        worldPosition.y += 0.5f;
-        return worldPosition;
-    }
-    void CreateRoom(Rect room)
-    {
-        for (int x = (int)room.x; x < room.xMax; x++)
-        {
-            for (int y = (int)room.y; y < room.yMax; y++)
-            {
-                //¹æ ÁÖº¯À» °¨½Î´Â º® »ı¼º
-                if (x == room.x | x == room.xMax | y == room.y | y == room.yMax)//(x == room.x | x == room.xMax - 1 | y == room.y | y == room.yMax - 1
-                {
-                    //Instantiate(wallPrefab, new Vector3(x, y, 0), Quaternion.identity);
-                    //wallTilemap.SetTile(new Vector3Int(x, y, 0), wallTile);
-                }
-                // ¹æ¾È¿¡ ¶¥À» »ı¼º
-                else
-                {
-                    floorTilemap.SetTile(new Vector3Int(x, y, 0), floorTile);
-                    Minimap.SetTile(new Vector3Int(x, y, 0), minimapTile);
-
-                }
-            }
-        }
+        return new DungeonTilePainter(
+            floorTilemap, Minimap,
+            floorTile, floorTile2, EntranceTile, wallTile, waterTile, minimapTile);
     }
 
-    void SpawnItems(Rect room, int count, int count2)
+    /// <summary>ë°© ì•ˆìª½ë§Œ ë°”ë‹¥ìœ¼ë¡œ ì¹ í•œë‹¤. í…Œë‘ë¦¬ëŠ” ë²½ìœ¼ë¡œ ë‚¨ê²¨ ë‘ê³ , ë¬¸ë§Œ ë‚˜ì¤‘ì— ëš«ëŠ”ë‹¤.</summary>
+    private static void PaintRoomFloor(DungeonTilePainter painter, RoomInfo room)
     {
-        for (int i = 0; i < count; i++)
+        for (int x = room.InteriorMinX; x <= room.InteriorMaxX; x++)
         {
-            Vector3Int spawnPosition = GetRandomPositionInRoom(room);
-
-            // ¾ÆÀÌÅÛ »ı¼º À§Ä¡°¡ Áßº¹µÇÁö ¾Êµµ·Ï ¹İº¹ÇØ¼­ À§Ä¡¸¦ Ã£À½
-            do
+            for (int y = room.InteriorMinY; y <= room.InteriorMaxY; y++)
             {
-                spawnPosition = GetRandomPositionInRoom(room);
-            }
-            while (Vector3Int.Distance(spawnPosition, stairsPosition) < minDistanceBetweenItemsAndStairs ||
-                   itemPositions.Contains(spawnPosition));  // °è´Ü À§Ä¡ ¹× ´Ù¸¥ ¾ÆÀÌÅÛ°ú Áßº¹µÇÁö ¾Êµµ·Ï È®ÀÎ
-
-            GameObject selectedPrefab = SelectItemWithWeight();
-
-            // ¾ÆÀÌÅÛÀ» Å¸ÀÏ¸Ê¿¡ ¸Â°Ô À§Ä¡ Á¶Á¤ ÈÄ »ı¼º
-            Instantiate(selectedPrefab, ApplyTilemapOffset(spawnPosition, floorTilemap), Quaternion.identity);
-            Vector3 SetGround = new Vector3(0,0,0);
-            itemPositions.Add(spawnPosition);
-            SetGround.x = spawnPosition.x + 0.5f;
-            SetGround.y = spawnPosition.y + 0.5f;
-            GameManager.GroundSetPositions.Add(SetGround);
-        }
-        // ¸ó½ºÅÍ »ı¼º ÀÌÀü¿¡ ¿òÁ÷ÀÌ´Â ¿ÀºêÁ§Æ® ¸®½ºÆ®¸¦ Ã¼Å©ÇÏ¿© »ı¼ºÇÒ À§Ä¡¸¦ °áÁ¤ÇÕ´Ï´Ù.
-        for (int i = 0; i < count2; i++)
-        {
-            // ¸ó½ºÅÍ »ı¼º À§Ä¡¸¦ °áÁ¤
-            Vector3Int spawnPosition;
-            bool isColliding;
-
-            do
-            {
-                // ¹«ÀÛÀ§ À§Ä¡ ¼±ÅÃ
-                spawnPosition = GetRandomPositionInRoom(room);
-                // ¿òÁ÷ÀÌ´Â ¿ÀºêÁ§Æ® ¸®½ºÆ®¸¦ Ã¼Å©ÇÏ¿© Ãæµ¹ È®ÀÎ
-                isColliding = IsCollidingWithMovingObjects(spawnPosition);
-            }
-            while (isColliding);
-
-            // Ãæµ¹ÇÏÁö ¾Ê´Â À§Ä¡¸¦ Ã£¾ÒÀ» °æ¿ì ¸ó½ºÅÍ »ı¼º
-            GameObject monsterObject = Instantiate(monsterPrefab, ApplyTilemapOffset(spawnPosition, floorTilemap), Quaternion.identity);
-            Enemy SetStat = monsterObject.GetComponent<Enemy>();
-            int randomStat = Random.Range(1 + GameManager.Stage, 3 + GameManager.Stage);
-            SetStat.SetStats(5, randomStat, randomStat - GameManager.Stage);
-            // ¿òÁ÷ÀÌ´Â ¿ÀºêÁ§Æ® ¸®½ºÆ®¿¡ À§Ä¡ Ãß°¡
-            movingObjects.Add(spawnPosition);
-        }
-    }
-
-    // °¡ÁßÄ¡¸¦ ±â¹İÀ¸·Î ¾ÆÀÌÅÛÀ» ¼±ÅÃÇÏ´Â ÇÔ¼ö
-    private GameObject SelectItemWithWeight()
-    {
-        float totalWeight = 0f;
-
-        // ÀüÃ¼ °¡ÁßÄ¡ °è»ê
-        for (int i = 0; i < itemWeights.Length; i++)
-        {
-            totalWeight += itemWeights[i];
-        }
-
-        // 0°ú ÃÑ °¡ÁßÄ¡ »çÀÌÀÇ ¹«ÀÛÀ§ °ª »ı¼º
-        float randomValue = Random.Range(0, totalWeight);
-
-        // ¹«ÀÛÀ§ °ªÀÌ ¾î´À °¡ÁßÄ¡¿¡ ÇØ´çÇÏ´ÂÁö È®ÀÎ
-        for (int i = 0; i < itemWeights.Length; i++)
-        {
-            if (randomValue < itemWeights[i])
-            {
-                return itemPrefabs[i];
-            }
-            randomValue -= itemWeights[i];
-        }
-
-        // ±âº»ÀûÀ¸·Î Ã¹ ¹øÂ° ¾ÆÀÌÅÛ ¹İÈ¯ (½ÇÁ¦·Î ¿©±â¿¡ µµ´ŞÇÏ¸é ¾ÈµÊ)
-        return itemPrefabs[0];
-    }
-
-    private float minDistanceBetweenObjects = 1.0f; // ¿ÀºêÁ§Æ® °£ ÃÖ¼Ò °Å¸®
-
-    // ¿òÁ÷ÀÌ´Â ¿ÀºêÁ§Æ® ¸®½ºÆ® Ã¼Å© ¸Ş¼­µå Ãß°¡
-    bool IsCollidingWithMovingObjects(Vector3Int position)
-    {
-        foreach (Vector3Int objPosition in movingObjects)
-        {
-            // À§Ä¡ ºñ±³
-            if (Vector3Int.Distance(objPosition, position) < minDistanceBetweenObjects)
-            {
-                return true;
+                painter.PaintRoomFloor(new Vector3Int(x, y, 0));
             }
         }
-
-        // Ãæµ¹ÇÏÁö ¾ÊÀ¸¸é false ¹İÈ¯
-        return false;
-    }
-
-    //¹æ¾È¿¡ ¹«ÀÛÀ§ À§Ä¡¸¦ Á¤ÇØÁÜ
-    Vector3Int GetRandomPositionInRoom(Rect room)// Vector2 GetRandomPositionInRoom(Rect room)
-    {
-        int xMin = (int)room.x + 1;
-        int xMax = (int)room.xMax - 1;
-        int yMin = (int)room.y + 1;
-        int yMax = (int)room.yMax - 1;
-
-        //float x = Random.Range(xMin, xMax);
-        //float y = Random.Range(yMin, yMax);
-        int x = Random.Range(xMin, xMax);
-        int y = Random.Range(yMin, yMax);
-
-        //return new Vector2(x, y);
-        return new Vector3Int(x, y, 0);
-    }
-
-    void SpawnStairsInRandomRoom()
-    {
-        if (rooms.Count > 0)
-        {
-            Rect randomRoom;
-            Vector3Int spawnPosition;
-            bool isCloseToItems;
-
-            do
-            {
-                randomRoom = rooms[Random.Range(0, rooms.Count)];
-                spawnPosition = GetRandomPositionInRoom(randomRoom);
-                isCloseToItems = itemPositions.Exists(itemPos => Vector3.Distance(spawnPosition, itemPos) < minDistanceBetweenTrapsAndItems);
-            } while (isCloseToItems);
-
-            Vector3 SetGround = new Vector3(0, 0, 0);
-            SetGround.x = spawnPosition.x + 0.5f;
-            SetGround.y = spawnPosition.y + 0.5f;
-            GameManager.GroundSetPositions.Add(SetGround);
-            Instantiate(stairsPrefab, ApplyTilemapOffset(spawnPosition, floorTilemap), Quaternion.identity);
-            stairsPosition = spawnPosition; // »ı¼ºµÈ °è´ÜÀÇ À§Ä¡¸¦ ÀúÀå
-        }
-    }
-
-    //»õ·Ó°Ô »ı¼ºµÉ ¹æ°ú ±âÁ¸ ¹æ °£ÀÇ ÃÖ¼Ò °Å¸®¸¦ È®ÀÎ
-    bool IsDistanceValid(Rect newRoom, List<Rect> existingRooms, int minDistance)
-    {
-        foreach (Rect room in existingRooms)
-        {
-            int distanceInObjects = CalculateDistanceInObjects(newRoom, room);
-            if (distanceInObjects < minDistance)
-            {
-                return false; // ÃÖ¼Ò °Å¸®¸¦ ÃæÁ·ÇÏÁö ¾ÊÀ¸¸é false ¹İÈ¯
-            }
-        }
-
-        return true; // ¸ğµç ±âÁ¸ ¹æ°úÀÇ °Å¸®°¡ ÃÖ¼Ò °Å¸® ÀÌ»óÀÌ¸é true ¹İÈ¯
-    }
-
-    int CalculateDistanceInObjects(Rect roomA, Rect roomB)
-    {
-        // ¹æ A¿Í ¹æ B »çÀÌÀÇ °¡·Î ¹æÇâ ¿ÀºêÁ§Æ®ÀÇ °¹¼ö¸¦ °è»ê
-        int objectDistanceX = Mathf.Abs((int)(roomA.center.x - roomB.center.x));
-
-        // ¹æ A¿Í ¹æ B »çÀÌÀÇ ¼¼·Î ¹æÇâ ¿ÀºêÁ§Æ®ÀÇ °¹¼ö¸¦ °è»ê
-        int objectDistanceY = Mathf.Abs((int)(roomA.center.y - roomB.center.y));
-
-        // °¡·Î ¹æÇâ°ú ¼¼·Î ¹æÇâÀÇ ¿ÀºêÁ§Æ® °¹¼ö¸¦ ÇÕÇÏ¿© ÃÑ ¿ÀºêÁ§Æ® °¹¼ö ¹İÈ¯
-        return objectDistanceX + objectDistanceY;
-    }
-
-    //Åë·Î¸¦ ¸¸µé±â À§ÇÑ °è»ê
-    void ConnectRooms()
-    {
-        // ÀÌ¹Ì ¿¬°áµÈ ¹æ°ú ÇØ´ç ¹æ¿¡ ´ëÇÑ to °ªÀ» ÀúÀåÇÒ µñ¼Å³Ê¸®
-        Dictionary<Vector3Int, Vector3Int> roomConnections = new Dictionary<Vector3Int, Vector3Int>();
-
-        foreach (Rect room in rooms)
-        {
-            // ¹æÀÇ Áß½ÉÀ» ±¸ÇÏ±â.
-            int x = (int)(room.x + room.width / 2);
-            int y = (int)(room.y + room.height / 2);
-            Vector3Int roomCenter = new Vector3Int(x, y, 0);
-
-            // ¹æÀÇ Áß½ÉÀÌ ÀÌ¹Ì ¿¬°áµÇ¾ú´ÂÁö È®ÀÎ
-            if (!connectionPoints.Contains(roomCenter))
-            {
-                connectionPoints.Add(roomCenter);
-
-                // ¹«ÀÛÀ§·Î ´Ù¸¥ ¹æ°ú ¿¬°á
-                if (connectionPoints.Count > 1)//¸¶Áö¸·À¸·Î Ãß°¡µÈ ¹æÀÇ Áß½ÉÀ» ½ÃÀÛÁ¡ from, ¿¬°áÇÒ ´ë»ó ¹æÀÇ Áß½ÉÀ» to·Î ¼³Á¤ÇÒ ÁØºñ
-                {
-                    int last = connectionPoints.Count - 1;
-                    Vector3Int from = connectionPoints[last];
-                    Vector3Int to;
-
-                    // ÀÌ¹Ì ¿¬°áµÈ ¹æÀÎÁö È®ÀÎÇÏ°í, ÀÌÀü to °ªÀ» °¡Á®¿À°Å³ª »õ·Î¿î °ªÀ» °áÁ¤ÇÕ´Ï´Ù.
-                    if (roomConnections.ContainsKey(roomCenter))
-                    {
-                        // ÀÌ¹Ì °áÁ¤µÈ to °ªÀ» °¡Á®¿È
-                        to = roomConnections[roomCenter];
-                    }
-                    else
-                    {
-                        // »õ·Î¿î ´Ù¸¥ ¹æ°ú ¿¬°á
-                        
-                            to = connectionPoints[Random.Range(0, last)];
-                        
-                    }
-                    // º¹µµ´Â ¹«Á¶°Ç ¿¬°á
-                    GenerateHallway(from, to);
-
-                    // ¿¬°áµÈ ¹æ°ú ÇØ´ç to °ªÀ» ÀúÀå
-                    roomConnections.Add(roomCenter, to);
-
-
-                    // 90% È®·ü·Î ¼öµµ ¿¬°á
-                    if (Random.value < 0.9f)
-                    {
-                        // ¼­·Î ´Ù¸¥ ½ÃÀÛÁ¡°ú ³¡Á¡À» ¼±ÅÃÇÏ¿© ¼ö·Î »ı¼º
-                        int otherLast = Random.Range(0, last);
-                        Vector3Int otherFrom = connectionPoints[otherLast];
-                        Vector3Int otherTo = connectionPoints[Random.Range(0, last)];
-
-                        // ½ÃÀÛÁ¡°ú ³¡Á¡ÀÌ °°Àº °æ¿ì ´Ù½Ã ¼±ÅÃ
-                        while (otherFrom == from && otherTo == to)
-                        {
-                            otherLast = Random.Range(0, last);
-                            otherFrom = connectionPoints[otherLast];
-                            otherTo = connectionPoints[Random.Range(0, last)];
-                        }
-
-                        GenerateWaterway(otherFrom, otherTo);
-                    }
-                }
-            }
-        }
-    }
-
-    List<Vector3Int> generatedTiles = new List<Vector3Int>();
-    List<Vector3Int> CompareTiles = new List<Vector3Int>();
-
-    void GenerateHallway(Vector3Int from, Vector3Int to)
-    {
-        CompareTiles.Clear();
-
-        int x = from.x;
-        int y = from.y;
-
-        int xDistance = Mathf.Abs(to.x - x);
-        int yDistance = Mathf.Abs(to.y - y);
-
-        if (xDistance > yDistance)
-        {
-            // x ¹æÇâÀ¸·Î Àı¹İ ÀÌµ¿
-            int halfXDistance = x + (int)(Mathf.Sign(to.x - x) * (xDistance / 2));
-            while (x != halfXDistance)
-            {
-                x += (int)Mathf.Sign(to.x - x);
-                Vector3Int position = new Vector3Int(x, y, 0);
-
-                if (!MakeHallwayTile(position))
-                {
-                    return; // ÀÌ¹Ì Å¸ÀÏÀÌ Á¸ÀçÇÏ¸é Áß´Ü
-                }
-            }
-
-            // y ¹æÇâÀ¸·Î toÀÇ y °ª±îÁö ÀÌµ¿
-            while (y != to.y)
-            {
-                y += (int)Mathf.Sign(to.y - y);
-                Vector3Int position = new Vector3Int(x, y, 0);
-
-                if (!MakeHallwayTile(position))
-                {
-                    return; // ÀÌ¹Ì Å¸ÀÏÀÌ Á¸ÀçÇÏ¸é Áß´Ü
-                }
-            }
-
-            // ³²Àº x ¹æÇâ °Å¸® ÀÌµ¿
-            while (x != to.x)
-            {
-                x += (int)Mathf.Sign(to.x - x);
-                Vector3Int position = new Vector3Int(x, y, 0);
-
-                if (!MakeHallwayTile(position))
-                {
-                    return; // ÀÌ¹Ì Å¸ÀÏÀÌ Á¸ÀçÇÏ¸é Áß´Ü
-                }
-            }
-        }
-        else
-        {
-            // y ¹æÇâÀ¸·Î Àı¹İ ÀÌµ¿
-            int halfYDistance = y + (int)Mathf.Sign(to.y - y) * (yDistance / 2);
-            while (y != halfYDistance)
-            {
-                y += (int)Mathf.Sign(to.y - y);
-                Vector3Int position = new Vector3Int(x, y, 0);
-
-                if (!MakeHallwayTile(position))
-                {
-                    return; // ÀÌ¹Ì Å¸ÀÏÀÌ Á¸ÀçÇÏ¸é Áß´Ü
-                }
-            }
-
-            // x ¹æÇâÀ¸·Î toÀÇ x °ª±îÁö ÀÌµ¿
-            while (x != to.x)
-            {
-                x += (int)Mathf.Sign(to.x - x);
-                Vector3Int position = new Vector3Int(x, y, 0);
-
-                if (!MakeHallwayTile(position))
-                {
-                    return; // ÀÌ¹Ì Å¸ÀÏÀÌ Á¸ÀçÇÏ¸é Áß´Ü
-                }
-            }
-
-            // ³²Àº y ¹æÇâ °Å¸® ÀÌµ¿
-            while (y != to.y)
-            {
-                y += (int)Mathf.Sign(to.y - y);
-                Vector3Int position = new Vector3Int(x, y, 0);
-
-                if (!MakeHallwayTile(position))
-                {
-                    return; // ÀÌ¹Ì Å¸ÀÏÀÌ Á¸ÀçÇÏ¸é Áß´Ü
-                }
-            }
-        }
-
-        generatedTiles.AddRange(CompareTiles);
-    }
-
-    bool MakeHallwayTile(Vector3Int position)
-    {
-        // ÀÌ¹Ì ÇØ´ç À§Ä¡¿¡ floorTile2°¡ Á¸ÀçÇÏ´ÂÁö È®ÀÎ
-        if (floorTilemap.GetTile(position) == floorTile2)
-        {
-            return false; // ÀÌ¹Ì Å¸ÀÏÀÌ Á¸ÀçÇÏ¸é Áß´Ü
-        }
-
-        floorTilemap.SetTile(position, floorTile2);
-        CompareTiles.Add(position);
-
-        if (IsEdgePoint(position))
-        {
-            Vector3 closestPointFloat = new Vector3(position.x, position.y, 0);
-            closestPointFloat.x += 0.5f;
-            closestPointFloat.y += 0.5f;
-            edgePoints.Add(closestPointFloat);
-            floorTilemap.SetTile(position, floorTile2);
-        }
-        Minimap.SetTile(position, minimapTile);
-        return true; // »õ·Î¿î Å¸ÀÏÀ» »ı¼ºÇÏ¸é °è¼Ó ÁøÇà
-    }
-
-    //¹æÀÇ Å×µÎ¸®ÀÎÁö È®ÀÎÇÏ´Â ºÎºĞ
-    bool IsEdgePoint(Vector3Int position)
-    {
-        foreach (Rect room in rooms)
-        {
-            Vector3Int bottomLeft = new Vector3Int((int)room.xMin, (int)room.yMin, 0);
-            Vector3Int topRight = new Vector3Int((int)room.xMax, (int)room.yMax, 0);
-
-            // Check if the position is on the left or right edge
-            if ((position.x == bottomLeft.x || position.x == topRight.x) && (position.y >= bottomLeft.y && position.y <= topRight.y))
-            {
-                return true;
-            }
-
-            // Check if the position is on the top or bottom edge
-            if ((position.y == bottomLeft.y || position.y == topRight.y) && (position.x >= bottomLeft.x && position.x <= topRight.x))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-
-    void GenerateWaterway(Vector3Int from, Vector3Int to)
-    {
-        int x = from.x;
-        int y = from.y;
-
-        while (x != to.x)
-        {
-            // X ¹æÇâÀ¸·Î ÀÌµ¿ ½Ã »ç¿ëÇÒ ¹üÀ§
-            //int xRange = GetRandomRange();
-            int xRange = Random.Range(1, 3);
-            x += (int)Mathf.Sign(to.x - from.x);
-            Vector3Int currentPosition = new Vector3Int(x, y, 0);
-
-            // If there is no floor tile at the current position, set water tile
-            if (floorTilemap.GetTile(currentPosition) == null)
-            {
-                edgePoints.Remove(currentPosition);
-                floorTilemap.SetTile(currentPosition, waterTile);
-
-                // y ¹æÇâÀ¸·Î À§/¾Æ·¡·Î ¹° Å¸ÀÏ Ãß°¡
-                AddWaterTilesInRange(currentPosition, true, xRange);
-            }
-        }
-
-        while (y != to.y)
-        {
-            // Y ¹æÇâÀ¸·Î ÀÌµ¿ ½Ã »ç¿ëÇÒ ¹üÀ§
-            //int yRange = GetRandomRange();
-            int yRange = Random.Range(1, 3);
-
-            y += (int)Mathf.Sign(to.y - from.y);
-            Vector3Int currentPosition = new Vector3Int(x, y, 0);
-
-            // If there is no floor tile at the current position, set water tile
-            if (floorTilemap.GetTile(currentPosition) == null)
-            {
-                edgePoints.Remove(currentPosition);
-                floorTilemap.SetTile(currentPosition, waterTile);
-
-                // x ¹æÇâÀ¸·Î ÁÂ/¿ì·Î ¹° Å¸ÀÏ Ãß°¡
-                AddWaterTilesInRange(currentPosition, false, yRange);
-            }
-
-        }
-    }
-    void AddWaterTilesInRange(Vector3Int position, bool isYAxis, int range)
-    {
-        for (int i = 1; i <= range; i++)
-        {
-            Vector3Int offset1 = isYAxis ? new Vector3Int(0, i, 0) : new Vector3Int(i, 0, 0);
-            Vector3Int offset2 = isYAxis ? new Vector3Int(0, -i, 0) : new Vector3Int(-i, 0, 0);
-
-            // À§/¾Æ·¡ ¶Ç´Â ÁÂ/¿ì¿¡ ¹° Å¸ÀÏ Ãß°¡
-            Vector3Int pos1 = position + offset1;
-            Vector3Int pos2 = position + offset2;
-
-            if (floorTilemap.GetTile(pos1) == null)
-            {
-                floorTilemap.SetTile(pos1, waterTile);
-            }
-            if (floorTilemap.GetTile(pos2) == null)
-            {
-                floorTilemap.SetTile(pos2, waterTile);
-            }
-        }
-    }
-
-    /*int GetRandomRange()
-    {
-        int range = Random.Range(1, 3); // 1¿¡¼­ 3 »çÀÌÀÇ ¹«ÀÛÀ§ °ª
-        if (range == 2)
-        {
-            range = Random.Range(2, 4); // 2 ¶Ç´Â 3
-        }
-        else if (range == 3)
-        {
-            range = 3; // ¹«Á¶°Ç 3
-        }
-        return range;
-    }*/
-
-    void FillMapWithWalls()
-    {
-        if (Random.value > 0.9f)
-        {
-            for (int x = 0; x < mapWidth; x++)
-            {
-                for (int y = 0; y < mapHeight; y++)
-                {
-                    Vector3Int position = new Vector3Int(x, y, 0);
-                    if (floorTilemap.GetTile(position) == null)
-                    {
-                        floorTilemap.SetTile(position, waterTile);
-                    }
-                }
-            }
-        }
-        else
-
-        for (int x = 0; x < mapWidth; x++)
-        {
-            for (int y = 0; y < mapHeight; y++)
-            {
-                Vector3Int position = new Vector3Int(x, y, 0);
-                if (floorTilemap.GetTile(position) == null)
-                {
-                    floorTilemap.SetTile(position, wallTile);
-                }
-            }
-        }
-    }
-
-    // ÀúÀåµÈ °è´ÜÀÇ À§Ä¡¸¦ ¹İÈ¯ÇÏ´Â ÇÔ¼ö
-    public Vector3Int GetStairsPosition()//public Vector3 GetStairsPosition()
-    {
-        return stairsPosition;
-    }
-    //ÇÔÁ¤ »ı¼º
-    void GenerateTraps()
-    {
-        foreach (Rect room in rooms)
-        {
-            // ¹æÀÌ ¹«ÀÛÀ§·Î »ı¼ºµÇ¾ú´ÂÁö È®ÀÎ 
-            if (rooms.Contains(room))
-            {
-
-                Vector3Int trapPosition;
-                bool isCloseToStairs, isCloseToItems, isAtEdge;
-
-                do
-                {
-                    trapPosition = GetRandomPositionInRoom(room);
-
-                    // ÇÔÁ¤ À§Ä¡°¡ °è´ÜÀÌ³ª ¹°°Ç¿¡ ³Ê¹« °¡±õÁö ¾ÊÀºÁö È®ÀÎ.
-                    isCloseToStairs = stairsPosition != null && Vector3Int.Distance(trapPosition, stairsPosition) < minDistanceBetweenTrapsAndStairs;
-                    isCloseToItems = itemPositions.Exists(itemPos => Vector3.Distance(trapPosition, itemPos) < minDistanceBetweenTrapsAndItems);
-                    isAtEdge = edgePoints.Exists(edge => Vector3.Distance(trapPosition, edge) < 1.5f);
-
-                } while (isCloseToStairs || isCloseToItems || isAtEdge);
-
-                // Á¶°ÇÀÌ ÃæÁ·µÇÁö ¾Ê´Â À§Ä¡¸¦ Ã£Àº °æ¿ì ÇÔÁ¤À» ¹èÄ¡
-                int randomValue = Random.Range(0, trapPrefabs.Length);
-
-                Vector3 SetGround = new Vector3(0, 0, 0);
-                SetGround.x = trapPosition.x + 0.5f;
-                SetGround.y = trapPosition.y + 0.5f;
-                GameManager.GroundSetPositions.Add(SetGround);
-                Instantiate(trapPrefabs[randomValue], ApplyTilemapOffset(trapPosition, floorTilemap), Quaternion.identity);
-                
-            }
-        }
-    }
-
-}
-
-//¹æ µ¥ÀÌÅÍ¸¦ ÀúÀåÇÏ±â À§ÇÑ ¹æ Å¬·¡½º
-public class Room
-{
-    public int x;
-    public int y;
-    public int width;
-    public int height;
-    public int xMax
-    {
-        get { return x + width; }
-    }
-    public int yMax
-    {
-        get { return y + height; }
     }
 }
