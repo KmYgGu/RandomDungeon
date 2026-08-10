@@ -14,7 +14,22 @@ public class DungeonLayout
     public RoomInfo RandomRoom() => Rooms[Random.Range(0, Rooms.Count)];
 
     /// <summary>
+    /// 걸어 다닐 수 있는 안쪽 칸들. <b>칸 좌표 그대로다.</b>
+    ///
+    /// 게임 규칙(워프 목적지 고르기 등)은 이쪽을 쓴다. 월드 좌표로 계산하면
+    /// 칸 중심의 0.5 때문에 어긋나기 쉽다 — RoomInfo.InteriorCellRect 주석 참고.
+    /// </summary>
+    public List<RectInt> InteriorCellRects()
+    {
+        var result = new List<RectInt>(Rooms.Count);
+        foreach (RoomInfo room in Rooms)
+            result.Add(room.InteriorCellRect);
+        return result;
+    }
+
+    /// <summary>
     /// 적이 방 안에 있는지 판정할 때 쓰는 영역들. (Enemy.roomdata)
+    /// 월드 좌표라서 새 코드는 InteriorCellRects 를 쓴다.
     /// </summary>
     public List<Rect> InteriorRects()
     {

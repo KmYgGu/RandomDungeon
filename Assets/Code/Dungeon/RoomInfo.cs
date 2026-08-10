@@ -60,8 +60,26 @@ public class RoomInfo
         0);
 
     /// <summary>
+    /// 걸어 다닐 수 있는 안쪽 칸들. <b>칸 좌표 그대로다.</b>
+    ///
+    /// 게임 규칙은 이쪽을 쓴다. 월드 좌표는 칸 중심이 x+0.5 라서, 그걸로 계산하면
+    /// "반 칸 어긋난다 / 한 칸 넘친다" 같은 실수가 조용히 난다(실제로 워프
+    /// 목적지를 고르다 두 번 냈다). RectInt 는 xMax 가 마지막 칸의 <b>다음</b>이라
+    /// `for (x = xMin; x &lt; xMax; x++)` 로 세면 개수가 저절로 맞는다.
+    ///
+    /// 월드 좌표는 화면에 놓을 때만 필요하다. GridUtil.CellCenter 로 그때 바꾼다.
+    /// </summary>
+    public RectInt InteriorCellRect => new RectInt(
+        InteriorMinX,
+        InteriorMinY,
+        InteriorMaxX - InteriorMinX + 1,
+        InteriorMaxY - InteriorMinY + 1);
+
+    /// <summary>
     /// 적이 "지금 방 안에 있는가" 를 판정할 때 쓰는 월드 좌표 영역.
     /// 칸의 중심이 x+0.5 이므로 안쪽 칸들의 중심만 포함하도록 잡는다.
+    ///
+    /// 새 코드는 InteriorCellRect 를 쓴다. 이쪽은 Enemy 가 아직 쓰고 있어 남겨 둔다.
     /// </summary>
     public Rect InteriorWorldRect => new Rect(
         Bounds.xMin + 1.5f,
