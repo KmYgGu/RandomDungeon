@@ -7,6 +7,20 @@ public enum ConditionEffect
     None,
     /// <summary>턴마다 수치만큼 체력이 깎인다.</summary>
     DamagePerTurn,
+
+    /// <summary>행동하지 못한다. 잠·마비처럼 턴을 통째로 넘긴다.</summary>
+    SkipTurn,
+
+    /// <summary>가려던 방향이 제멋대로 바뀐다. 혼란.</summary>
+    ScrambleDirection,
+
+    /// <summary>
+    /// 특수 능력이 발동하지 않는다. 봉인.
+    ///
+    /// 아직 봉인할 특수 능력이 게임에 없다. 갈래만 만들어 두었으니
+    /// 능력이 생기면 그쪽에서 이 효과가 걸려 있는지 보면 된다.
+    /// </summary>
+    SealAbility,
 }
 
 /// <summary>이롭냐 해롭냐. 표시 순서가 이 차례다.</summary>
@@ -20,8 +34,16 @@ public enum ConditionKind
 /// <summary>시트 한 줄. 상태이상 하나의 정의.</summary>
 public class ConditionDefinition
 {
-    /// <summary>코드가 가리키는 이름. 시트에서 바꾸면 코드가 못 찾는다.</summary>
+    /// <summary>
+    /// 코드가 가리키는 이름(시트의 id2 열). 시트에서 바꾸면 코드가 못 찾는다.
+    ///
+    /// 표의 번호(id)가 아니라 이쪽이 코드의 이름이다. 번호를 쓰면 코드에
+    /// 20002 라고만 남아 그게 무엇인지 알 수 없다.
+    /// </summary>
     public string Id;
+
+    /// <summary>표 번호(시트의 id 열). 10000번대가 이로움, 20000번대가 해로움.</summary>
+    public int Number;
 
     public string Name;
     public string Description;
@@ -80,12 +102,13 @@ public static class ConditionSheet
 
             // 엑셀에서 붙여 넣다 보면 칸 끝에 탭·공백이 남는다.
             // 그대로 두면 id 가 미묘하게 달라져 코드가 못 찾는다.
-            string id = Clean(row.id);
+            string id = Clean(row.id2);
             if (id.Length == 0) continue;
 
             result.Add(new ConditionDefinition
             {
                 Id = id,
+                Number = row.id,
                 Name = Clean(row.name),
                 Description = Clean(row.explanation),
                 Kind = ParseKind(row.type),
@@ -120,6 +143,9 @@ public static class ConditionSheet
         switch (Clean(cell))
         {
             case "턴당피해": return ConditionEffect.DamagePerTurn;
+            case "행동불가": return ConditionEffect.SkipTurn;
+            case "방향교란": return ConditionEffect.ScrambleDirection;
+            case "능력봉인": return ConditionEffect.SealAbility;
             case "없음": return ConditionEffect.None;
             default:
                 problems?.Add($"'{id}' 의 효과 '{Clean(cell)}' 를 모릅니다. '없음' 으로 봅니다.");

@@ -109,7 +109,11 @@ public class ExcelImporter : AssetPostprocessor
 		{
 			var cell = headerRow.GetCell(i);
 			if(cell == null || cell.CellType == CellType.Blank) break;
-			fieldNames.Add(cell.StringCellValue);
+			// 열 이름 끝에 붙은 공백을 털어 낸다.
+			// 엑셀에서 머리글을 치다 보면 "droprate " 처럼 공백이 남기 쉬운데,
+			// 그대로 두면 C# 필드 이름과 글자가 달라 그 열이 통째로 무시된다.
+			// 경고도 없이 비어 버리므로 여기서 막는다.
+			fieldNames.Add(cell.StringCellValue.Trim());
 		}
 		return fieldNames;
 	}

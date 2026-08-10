@@ -11,13 +11,37 @@ using UnityEngine;
 /// ── 이름 규칙(라이브러리가 정한 것) ───────────────────────────────
 ///   클래스 이름 = 엑셀 파일 이름   (ExcelData.xlsx  -> class ExcelData)
 ///   필드 이름   = 시트 이름        (시트 Conditions -> List Conditions)
-/// 둘 중 하나라도 어긋나면 조용히 비어 있게 되므로 함부로 바꾸지 않는다.
+///   필드 이름   = 열 이름          (열 explanation  -> string explanation)
+/// 셋 중 하나라도 어긋나면 조용히 비어 있게 되므로 함부로 바꾸지 않는다.
+///
+/// ── 시트를 늘릴 때 ────────────────────────────────────────────────
+/// 임포터는 시트를 훑지 않고 **이 클래스의 필드를** 훑는다(ExcelImporter.ImportExcel).
+/// 그래서 엑셀에 시트만 더하면 아무 일도 일어나지 않는다. 경고조차 없다.
+/// 실제로 Trap · Monster · item 세 시트가 여기 필드가 없다는 이유만으로
+/// 한동안 통째로 버려지고 있었다. 시트를 늘리면 여기 필드도 반드시 함께 늘린다.
 /// </summary>
-[ExcelAsset]
+// 저장할 때마다 "Imported N sheets" 로그가 뜬다. N 이 시트 수(지금 4)보다 적으면
+// 필드 이름과 시트 이름이 어긋난 것이다 — 임포터는 그 경우 아무 말도 하지 않으므로,
+// 이 로그가 조용한 실패를 알아채는 유일한 방법이다.
+[ExcelAsset(LogOnImport = true)]
 public class ExcelData : ScriptableObject
 {
-    /// <summary>상태이상 표(시트 이름 "Conditions").</summary>
+    /// <summary>상태이상 표(시트 "Conditions").</summary>
     public List<ConditionEntity> Conditions;
+
+    /// <summary>함정 표(시트 "Trap").</summary>
+    public List<TrapEntity> Trap;
+
+    /// <summary>적 표(시트 "Monster").</summary>
+    public List<MonsterEntity> Monster;
+
+    /// <summary>
+    /// 아이템 표(시트 "item").
+    ///
+    /// 이 필드만 소문자인 것은 시트 이름이 소문자여서다. 시트 이름을 Items 로
+    /// 바꾸면 여기도 함께 바꿀 것 — 지금은 시트 쪽을 따라간다.
+    /// </summary>
+    public List<ItemEntity> item;
 }
 
 /// <summary>
@@ -29,11 +53,118 @@ public class ExcelData : ScriptableObject
 [Serializable]
 public class ConditionEntity
 {
-    public string id;
+    /// <summary>표 번호. 10000번대가 이로움, 20000번대가 해로움.</summary>
+    public int id;
+
+    /// <summary>
+    /// 코드가 가리키는 이름(hungry, poison …).
+    ///
+    /// 게임 코드는 번호가 아니라 이쪽을 쓴다. 번호는 표를 정리하는 사람의 것이고,
+    /// 코드에 20002 라고 적혀 있으면 그게 무엇인지 알 길이 없기 때문이다.
+    /// </summary>
+    public string id2;
+
     public string name;
     public string explanation;
     public string type;
     public string effect;
     public int value;
     public int turn;
+}
+
+/// <summary>함정 표의 한 줄.</summary>
+[Serializable]
+public class TrapEntity
+{
+    /// <summary>표 번호.</summary>
+    public int id;
+
+    /// <summary>코드가 가리키는 이름(dart, gas …).</summary>
+    public string id2;
+
+    public string name;
+
+    /// <summary>
+    /// 작동했을 때 메시지 창에 그대로 띄우는 문구("어디선가 독침이 날라왔다!").
+    ///
+    /// 상태이상 표의 같은 이름 열과 쓰임이 같다 — 둘 다 플레이어가 읽는 글이다.
+    /// </summary>
+    public string explanation;
+
+    /// <summary>작동할 때 캐릭터가 취하는 몸짓. TrapSheet 이 뜻을 정한다.</summary>
+    public string charani;
+
+    /// <summary>
+    /// 무슨 일이 일어나야 하는지 적어 둔 설정("힘이 감소").
+    /// 사람이 읽는 메모라서 코드가 이 글자를 보고 갈래를 나누지는 않는다.
+    /// </summary>
+    public string note;
+}
+
+/// <summary>적 표의 한 줄.</summary>
+[Serializable]
+public class MonsterEntity
+{
+    public int id;
+    public string name;
+    public int hp;
+    public int atk;
+    public int def;
+    public int exp;
+
+    /// <summary>아직 뜻이 정해지지 않은 열(값 예: "중").</summary>
+    public string rate;
+
+    public string category;
+
+    /// <summary>도감에 띄울 글.</summary>
+    public string explanation;
+
+    /// <summary>
+    /// 이 적이 치명타를 낼 확률(%). 0 이면 치명타를 내지 않는다.
+    ///
+    /// 모든 적이 치명타를 내면 맞는 쪽에서는 그냥 피해 폭이 넓은 것으로만 보인다.
+    /// 치명타를 내는 적이 정해져 있어야 "저 녀석은 조심해야 한다" 가 성립한다.
+    /// </summary>
+    public int critical;
+
+    /// <summary>사람이 읽는 메모.</summary>
+    public string note;
+}
+
+/// <summary>아이템 표의 한 줄.</summary>
+[Serializable]
+public class ItemEntity
+{
+    public int id;
+    public string name;
+
+    /// <summary>설명문. 시트의 오타(descripttion)를 고치면서 이름을 맞췄다.</summary>
+    public string explanation;
+
+    public int sellprice;
+
+    /// <summary>food / expendables …</summary>
+    public string itemtype;
+
+    /// <summary>none 이면 장비가 아니다.</summary>
+    public string equipslot;
+
+    /// <summary>장비의 기본 성능. 장비가 아니면 0.</summary>
+    public int basepower;
+
+    /// <summary>
+    /// 합성할 때 베이스로만 쓸 수 있는가(1 이면 그렇다).
+    /// 재료로는 쓸 수 없다는 뜻이다.
+    /// </summary>
+    public int baseonly;
+
+    /// <summary>장비의 특수 능력. 코드가 아는 이름만 쓸 수 있다(EquipAbility).</summary>
+    public string ability;
+
+    /// <summary>특수 능력이 쓰는 숫자.</summary>
+    public int abilityvalue;
+
+    /// <summary>바닥에 나올 등급(A+ · A · B- …). 뒤 글자일수록 드물다.</summary>
+    public string droprate;
 }

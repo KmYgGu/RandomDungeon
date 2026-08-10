@@ -13,7 +13,56 @@ MonoBehaviour:
   m_Name: ExcelData
   m_EditorClassIdentifier: 
   Conditions:
-  - id: poison
+  - id: 10001
+    id2: critup
+    name: "\uCE58\uBA85\uD0C0\uC0C1\uC2B9"
+    explanation: "\uD3C9\uC18C\uBCF4\uB2E4 \uCE58\uBA85\uD0C0\uAC00 \uC798 \uB098\uC624\uACA0\uC5B4"
+    type: "\uC774\uB85C\uC6C0"
+    effect: "\uD68C\uC2EC\uC99D\uAC00"
+    value: 70
+    turn: 20
+  - id: 10002
+    id2: acuracyup
+    name: "\uBA85\uC911\uC99D\uAC00"
+    explanation: "\uACF5\uACA9\uC774 \uC798 \uB9DE\uCDB0\uC9C0\uACA0\uC5B4"
+    type: "\uC774\uB85C\uC6C0"
+    effect: "\uBA85\uC911\uC99D\uAC00"
+    value: 100
+    turn: 0
+  - id: 10003
+    id2: atkup
+    name: "\uACF5\uACA9\uC0C1\uC2B9"
+    explanation: "\uACF5\uACA9\uB825\uC774 \uD3C9\uC18C\uBCF4\uB2E4 \uAC15\uD574"
+    type: "\uC774\uB85C\uC6C0"
+    effect: "\uACF5\uACA9\uC99D\uAC00"
+    value: 150
+    turn: 0
+  - id: 10004
+    id2: hide
+    name: "\uC740\uC2E0"
+    explanation: "\uB098\uB97C \uBC1C\uACAC\uD560 \uC218 \uC5C6\uC5B4"
+    type: "\uC774\uB85C\uC6C0"
+    effect: "\uC740\uC2E0"
+    value: 0
+    turn: 10
+  - id: 10005
+    id2: fast
+    name: "\uBC1C\uBE60\uB984"
+    explanation: "\uBE60\uB974\uAC8C \uC6C0\uC9C1\uC774\uACA0\uC5B4"
+    type: "\uC774\uB85C\uC6C0"
+    effect: "\uC18D\uB3C4\uC99D\uAC00"
+    value: 0
+    turn: 10
+  - id: 10006
+    id2: full
+    name: "\uBC30\uBD80\uB984"
+    explanation: "\uBC30\uAC00 \uBC30\uBD88\uB7EC"
+    type: "\uC774\uB85C\uC6C0"
+    effect: "\uB9CC\uBCF5\uB3C4 \uAC10\uC18C \uD134 \uC99D\uAC00"
+    value: 0
+    turn: 0
+  - id: 20001
+    id2: poison
     name: "\uB3C5"
     explanation: "\uB3C5\uC5D0 \uC758\uD55C \uB370\uBBF8\uC9C0\uB97C \uC785\uACE0
       \uC788\uC5B4"
@@ -21,81 +70,255 @@ MonoBehaviour:
     effect: "\uD134\uB2F9\uD53C\uD574"
     value: 1
     turn: 10
-  - id: hungry
+  - id: 20002
+    id2: hungry
     name: "\uBC30\uACE0\uD514"
     explanation: "\uBC30\uACE0\uD514\uC744 \uB290\uB07C\uACE0 \uC788\uC5B4"
     type: "\uD574\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
+    effect: "\uBC30\uACE0\uD514"
     value: 0
     turn: 0
-  - id: starving
+  - id: 20003
+    id2: starving
     name: "\uAD76\uC8FC\uB9BC"
     explanation: "\uAD76\uC8FC\uB824 \uCCB4\uB825\uC774 \uC904\uACE0 \uC788\uC5B4"
     type: "\uD574\uB85C\uC6C0"
     effect: "\uD134\uB2F9\uD53C\uD574"
     value: 1
     turn: 0
-  - id: "critup\t"
-    name: "\uCE58\uBA85\uD0C0\uC0C1\uC2B9"
-    explanation: "\uD3C9\uC18C\uBCF4\uB2E4 \uCE58\uBA85\uD0C0\uAC00 \uC798 \uB098\uC624\uACA0\uC5B4"
-    type: "\uC774\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
-    value: 0
-    turn: 20
-  - id: "blindness\t"
+  - id: 20004
+    id2: blindness
     name: "\uC2E4\uBA85"
     explanation: "\uC55E\uC774 \uBCF4\uC774\uC9C8 \uC54A\uC544"
     type: "\uD574\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
+    effect: "\uC2E4\uBA85"
     value: 0
     turn: 10
-  - id: acuracyup
-    name: "\uBA85\uC911\uC99D\uAC00"
-    explanation: "\uACF5\uACA9\uC774 \uC798 \uB9DE\uCDB0\uC9C0\uACA0\uC5B4"
-    type: "\uC774\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
-    value: 0
-    turn: 0
-  - id: "disarray\t"
+  - id: 20005
+    id2: disarray
     name: "\uD63C\uB780"
     explanation: "\uC5C9\uB6B1\uD55C \uBC29\uD5A5\uC73C\uB85C \uD589\uB3D9\uD558\uACA0\uC5B4"
     type: "\uD574\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
+    effect: "\uBC29\uD5A5\uAD50\uB780"
     value: 0
     turn: 10
-  - id: "atkup\t"
-    name: "\uACF5\uACA9\uC0C1\uC2B9"
-    explanation: "\uACF5\uACA9\uB825\uC774 \uD3C9\uC18C\uBCF4\uB2E4 \uAC15\uD574"
-    type: "\uC774\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
-    value: 0
-    turn: 0
-  - id: "hide\t"
-    name: "\uC740\uC2E0"
-    explanation: "\uB098\uB97C \uBC1C\uACAC\uD560 \uC218 \uC5C6\uC5B4"
-    type: "\uC774\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
-    value: 0
-    turn: 10
-  - id: "curse\t"
+  - id: 20006
+    id2: curse
     name: "\uC800\uC8FC"
     explanation: "\uD53C\uD574\uB97C \uC8FC\uBA74 \uB098\uB3C4 \uD53C\uD574\uB97C
       \uBC1B\uACA0\uC5B4"
     type: "\uD574\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
+    effect: "\uC800\uC8FC"
     value: 0
     turn: 30
-  - id: "heavy\t"
+  - id: 20007
+    id2: heavy
     name: "\uBB34\uAC70\uC6C0"
     explanation: "\uB290\uB9AC\uAC8C \uC6C0\uC9C1\uC774\uACA0\uC5B4"
     type: "\uD574\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
+    effect: "\uC18D\uB3C4\uAC10\uC18C"
     value: 0
     turn: 10
-  - id: fast
-    name: "\uBC1C\uBE60\uB984"
-    explanation: "\uBE60\uB974\uAC8C \uC6C0\uC9C1\uC774\uACA0\uC5B4"
-    type: "\uC774\uB85C\uC6C0"
-    effect: "\uC5C6\uC74C"
+  - id: 20008
+    id2: restraint
+    name: "\uBD09\uC778"
+    explanation: "\uD2B9\uC218 \uB2A5\uB825\uC774 \uBC1C\uB3D9\uB418\uC9C0 \uC54A\uC544."
+    type: "\uD574\uB85C\uC6C0"
+    effect: "\uB2A5\uB825\uBD09\uC778"
+    value: 0
+    turn: 30
+  - id: 20009
+    id2: sleep
+    name: "\uC595\uC740 \uC7A0"
+    explanation: "\uC7A0\uAE50 \uC7A0\uC774 \uB4E4\uC5C8\uC5B4"
+    type: "\uD574\uB85C\uC6C0"
+    effect: "\uD589\uB3D9\uBD88\uAC00"
+    value: 0
+    turn: 5
+  - id: 20010
+    id2: sopor
+    name: "\uAE4A\uC740 \uC7A0"
+    explanation: "\uAE4A\uC740 \uC7A0\uC5D0 \uB4E4\uC5C8\uC5B4"
+    type: "\uD574\uB85C\uC6C0"
+    effect: "\uD589\uB3D9\uBD88\uAC00"
     value: 0
     turn: 10
+  - id: 20011
+    id2: appetite
+    name: "\uC2DD\uC695"
+    explanation: "\uBA39\uACE0 \uC2F6\uC740\uAC8C \uB9CE\uC544\uC84C\uC5B4"
+    type: "\uD574\uB85C\uC6C0"
+    effect: "\uB9CC\uBCF5\uB3C4 \uAC10\uC18C \uD134 \uAC10\uC18C"
+    value: 0
+    turn: 0
+  - id: 20012
+    id2: manipulate
+    name: "\uC870\uC885\uB2F9\uD568"
+    explanation: "\uB0B4 \uB73B\uB300\uB85C \uC6C0\uC9C1\uC77C \uC218 \uC5C6\uC5B4"
+    type: "\uD574\uB85C\uC6C0"
+    effect: "\uC644\uC804 \uBB34\uC791\uC704 \uD589\uB3D9"
+    value: 0
+    turn: 10
+  - id: 20013
+    id2: piss
+    name: "\uC5F4\uBC1B\uC74C"
+    explanation: "\uB208 \uC55E\uC5D0 \uBCF4\uC774\uB294 \uB204\uAD6C\uB4E0 \uB54C\uB824\uC8FC\uACE0
+      \uC2F6\uC5B4"
+    type: "\uD574\uB85C\uC6C0"
+    effect: "\uC801\uC744 \uD5A5\uD574 \uAC15\uC81C \uC774\uB3D9, \uAC15\uC81C \uACF5\uACA9"
+    value: 0
+    turn: 30
+  - id: 20014
+    id2: caught
+    name: "\uBD99\uC7A1\uD798"
+    explanation: "\uC0C1\uB300\uC5D0\uAC8C \uB3C4\uB9DD\uAC08 \uC218 \uC5C6\uC5B4"
+    type: "\uD574\uB85C\uC6C0"
+    effect: "\uC774\uB3D9\uBD88\uAC00"
+    value: 0
+    turn: 0
+  Trap:
+  - id: 10001
+    id2: dart
+    name: "\uB3C5\uCE68"
+    explanation: "\uC5B4\uB514\uC120\uAC00 \uB3C5\uCE68\uC774 \uB0A0\uB77C\uC654\uB2E4!"
+    charani: "\uD53C\uACA9"
+    note: "\uD798\uC774 \uAC10\uC18C"
+  - id: 10002
+    id2: warp
+    name: "\uC6CC\uD504"
+    explanation: 
+    charani: "\uBE59\uAE00"
+    note: "\uBB34\uC791\uC704 \uBC29 \uC704\uCE58\uB85C \uC774\uB3D9"
+  - id: 10003
+    id2: gas
+    name: "\uAC00\uC2A4"
+    explanation: "\uC7A0\uC7AC\uC6B0\uB294 \uAC00\uC2A4\uB2E4!"
+    charani: "\uC218\uBA74"
+    note: "\uAC15\uC81C \uC218\uBA74"
+  - id: 10004
+    id2: blow
+    name: "\uB0A0\uB9AC\uAE30"
+    explanation: 
+    charani: "\uD53C\uACA9"
+    note: "\uBCF4\uACE0 \uC788\uB294 \uBC18\uB300 \uBC29\uD5A5\uC73C\uB85C \uB0A0\uB824\uAC10"
+  - id: 10005
+    id2: hole
+    name: "\uAD6C\uBA4D"
+    explanation: "\uAD6C\uBA4D\uC73C\uB85C \uB5A8\uC5B4\uC84C\uB2E4!"
+    charani: "\uC5C6\uC74C"
+    note: "\uAC15\uC81C\uB85C \uB2E4\uC74C \uCE35\uC73C\uB85C"
+  - id: 10006
+    id2: spin
+    name: "\uD68C\uC804"
+    explanation: 
+    charani: "\uBE59\uAE00\uBE59\uAE00"
+    note: "\uD63C\uB780 \uC0C1\uD0DC"
+  - id: 10007
+    id2: restraint
+    name: "\uBD09\uC778"
+    explanation: "\uC7A5\uBE44\uC758 \uB2A5\uB825\uC774 \uBD09\uC778 \uB2F9\uD588\uB2E4!"
+    charani: "\uC5C6\uC74C"
+    note: "\uD2B9\uC218\uB2A5\uB825\uBD09\uC778"
+  - id: 10008
+    id2: soil
+    name: "\uC624\uBB3C"
+    explanation: "(food\uBA85)\uC774 \uC0C1\uD574\uBC84\uB838\uB2E4!"
+    charani: "\uC5C6\uC74C"
+    note: "\uBA39\uC744 \uC218 \uC788\uB294 \uC544\uC774\uD15C\uC774 \uC0C1\uD568"
+  - id: 10009
+    id2: sticky
+    name: "\uB048\uC801\uB048\uC801"
+    explanation: "(\uC544\uC774\uD15C\uBA85)\uC5D0 \uB048\uC801\uD55C \uC561\uCCB4\uAC00
+      \uBB3B\uC5B4\uBC84\uB838\uB2E4!"
+    charani: "\uC5C6\uC74C"
+    note: "\uC544\uC774\uD15C \uD558\uB098\uAC00 \uC0AC\uC6A9\uBD88\uAC00"
+  Monster:
+  - id: 10001
+    name: "\uAC78\uC5B4\uB2E4\uB2C8\uB294 \uC2DC\uCCB4"
+    hp: 5
+    atk: 2
+    def: 2
+    exp: 3
+    rate: "\uC911"
+    category: "\uBAAC\uC2A4\uD130"
+    explanation: "\uBC1C\uACAC\uD558\uBA74 \uB2E4\uAC00 \uC624\uACA0\uC5B4"
+    critical: 0
+    note: 
+  item:
+  - id: 10001
+    name: "\uAE30\uB825\uD68C\uBCF5\uC57D"
+    explanation: "\uAC10\uC18C\uD55C \uD798\uC744 \uD68C\uBCF5\uC2DC\uCF1C\uC90D\uB2C8\uB2E4."
+    sellprice: 200
+    itemtype: expendables
+    equipslot: none
+    basepower: 0
+    baseonly: 0
+    ability: 
+    abilityvalue: 0
+    droprate: B+
+  - id: 20001
+    name: "\uC0AC\uACFC"
+    explanation: "\uB9CC\uBCF5\uB3C4\uB97C 30 \uD68C\uBCF5\uD569\uB2C8\uB2E4."
+    sellprice: 50
+    itemtype: food
+    equipslot: none
+    basepower: 0
+    baseonly: 0
+    ability: 
+    abilityvalue: 0
+    droprate: A
+  - id: 30001
+    name: "\uD68C\uBCF5\uC528\uC557"
+    explanation: "\uCCB4\uB825\uC744 10\uB9CC\uD07C \uD68C\uBCF5\uD569\uB2C8\uB2E4."
+    sellprice: 100
+    itemtype: food
+    equipslot: none
+    basepower: 0
+    baseonly: 0
+    ability: 
+    abilityvalue: 0
+    droprate: A+
+  - id: 40001
+    name: "\uD798\uC758\uAD6C\uC2AC"
+    explanation: "\uD798 \uCD5C\uB300\uCE58\uB97C 1 \uC99D\uAC00\uC2DC\uD0B5\uB2C8\uB2E4."
+    sellprice: 500
+    itemtype: expendables
+    equipslot: none
+    basepower: 0
+    baseonly: 0
+    ability: 
+    abilityvalue: 0
+    droprate: B-
+  - id: 50001
+    name: "\uB098\uBB34\uBABD\uB465\uC774"
+    explanation: "\uACBD\uD5D8\uCE58\uB97C \uCD94\uAC00\uB85C \uBC1B\uC2B5\uB2C8\uB2E4."
+    sellprice: 500
+    itemtype: equipment
+    equipslot: weapon
+    basepower: 2
+    baseonly: 1
+    ability: "\uACBD\uD5D8\uCE58\uC99D\uAC00"
+    abilityvalue: 1
+    droprate: C
+  - id: 60001
+    name: "\uD5CC\uC637"
+    explanation: "\uBC1B\uB294 \uCE58\uBA85\uD0C0 \uB370\uBBF8\uC9C0\uB97C \uBB34\uD6A8\uD654\uC2DC\uD0B5\uB2C8\uB2E4."
+    sellprice: 300
+    itemtype: equipment
+    equipslot: armor
+    basepower: 1
+    baseonly: 0
+    ability: "\uCE58\uBA85\uD0C0\uBB34\uD6A8"
+    abilityvalue: 0
+    droprate: C
+  - id: 70001
+    name: "\uAD6C\uB9AC\uBC18\uC9C0"
+    explanation: "\uC27D\uAC8C \uBC30\uACE0\uD504\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."
+    sellprice: 600
+    itemtype: equipment
+    equipslot: accessories
+    basepower: 0
+    baseonly: 0
+    ability: "\uB9CC\uBCF5\uB3C4\uC808\uC57D"
+    abilityvalue: 5
+    droprate: C-
