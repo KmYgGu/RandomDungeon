@@ -123,3 +123,4 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   triggerChance: 0.5
+  description: {fileID: 11400000, guid: f42d91e587d938b4a8fd329f1704aee9, type: 2}

@@ -3,16 +3,117 @@
 /// <summary>
 /// 바닥에 떨어져 있거나 가방에 든 아이템 '한 개' 의 개별 정보.
 ///
-/// ItemDescription 은 종류마다 하나뿐인 설명서라서 "이 검은 +3, 저 검은 +0"
-/// 같은 개체별 차이를 담을 수 없다. 그런 값은 여기에 둔다.
+/// 두 가지를 들고 다닌다 —
+///   description : 어느 종류인가. 종류마다 하나뿐인 설명서를 가리킨다.
+///   enhancement : 이 한 개만의 값. "이 검은 +3, 저 검은 +0"
 ///
-/// 이 컴포넌트가 붙어 있지 않은 아이템은 강화 0 으로 본다.
-/// 그래서 기존 소모품 프리팹들은 아무것도 고치지 않아도 된다.
+/// ── 왜 오브젝트가 정의를 들고 다니는가 ────────────────────────────
+/// 예전에는 GameObject 이름이 곧 신원이었다(`groundItem.name`). 그래서
+/// 프리팹 이름 · 애셋의 itemName · ItemEffects 의 키 <b>세 곳이 글자까지
+/// 같아야</b> 했고, 실제로 시트의 "힘의구술" 과 프리팹의 "힘의구슬" 이
+/// 한 글자 어긋나 있었다. 어긋나도 에러는 나지 않고 그냥 안 먹는다.
+///
+/// 지금은 오브젝트가 자기 정의를 직접 가리킨다. 프리팹 이름은 무엇이든
+/// 상관없고, 이름은 화면에 보여 주는 데만 쓴다.
 /// </summary>
 public class ItemInstance : MonoBehaviour
 {
+    /// <summary>이 아이템이 어느 종류인가. 프리팹에서 연결한다.</summary>
+    public ItemDescription description;
+
     /// <summary>강화 수치(+n). 무기면 공격력, 방어구면 방어력에 그대로 더해진다.</summary>
     public int enhancement;
+
+    /// <summary>
+    /// 끈적끈적한가. 원작의 저주를 강하게 만든 것이다.
+    ///
+    ///   소모품이면  — <b>쓸 수 없다.</b> 버리거나 던지는 것은 된다.
+    ///   장비면      — 차는 것은 되지만 <b>한 번 차면 벗을 수 없다.</b>
+    ///                 벗을 수 없으니 그동안은 버리지도 던지지도 교환하지도 못한다.
+    ///
+    /// 표식(MarkBook)과 달리 <b>이 물건 하나</b>의 성질이라 여기에 둔다.
+    /// 같은 사과라도 하나는 멀쩡하고 하나는 끈적할 수 있다.
+    /// </summary>
+    public bool sticky;
+
+    private void Awake()
+    {
+        if (description == null)
+        {
+            // 비어 있으면 이름도 효과도 나오지 않는다. 조용히 넘어가면
+            // "왜 못 먹지" 를 아이템 코드에서 찾게 되므로 여기서 알린다.
+            Debug.LogWarning($"{name}: 아이템 정의(description)가 비어 있습니다.", this);
+            return;
+        }
+
+        SpriteApplier.Apply(gameObject, description.sprites);
+    }
+
+    /// <summary>컴포넌트가 없거나 정의가 비어 있으면 null.</summary>
+    public static ItemDescription DescriptionOf(GameObject item)
+    {
+        if (item == null) return null;
+
+        ItemInstance instance = item.GetComponent<ItemInstance>();
+        return instance != null ? instance.description : null;
+    }
+
+    /// <summary>
+    /// 조회에 쓰는 번호. 정의가 없으면 0 이며, 어떤 표에도 걸리지 않는다.
+    /// </summary>
+    public static int IdOf(GameObject item)
+    {
+        ItemDescription description = DescriptionOf(item);
+        return description != null ? description.id : 0;
+    }
+
+    /// <summary>
+    /// 화면에 보여 줄 이름.
+    ///
+    /// 정의가 아직 연결되지 않은 프리팹이 있을 수 있어 GameObject 이름으로
+    /// 물러선다. 전부 연결하고 나면 이 뒷길은 지워도 된다.
+    /// </summary>
+    public static string DisplayNameOf(GameObject item)
+    {
+        if (item == null) return string.Empty;
+
+        ItemDescription description = DescriptionOf(item);
+        return description != null
+            ? description.itemName
+            : item.name.Replace("(Clone)", string.Empty);
+    }
+
+    /// <summary>
+    /// 이름 앞에 붙일 표식 글자. 적어 둔 것이 없으면 빈 문자열.
+    ///
+    /// 표식은 이 물건 하나가 아니라 <b>종류</b>에 붙어 있으므로(MarkBook),
+    /// 번호로 물어본다. 그래서 던지든 바닥에 두든 같은 표식이 따라다닌다.
+    /// </summary>
+    public static string MarkPrefixOf(GameObject item)
+    {
+        // 끈적끈적이 앞에 온다. 게임이 붙인 사실이 내가 적어 둔 메모보다 먼저다.
+        string sticky = IsSticky(item) ? ItemMark.StickyPrefix() : string.Empty;
+
+        return sticky + GameManager.Marks.PrefixOf(IdOf(item));
+    }
+
+    /// <summary>끈적끈적한가. 컴포넌트가 없으면 아니다.</summary>
+    public static bool IsSticky(GameObject item)
+    {
+        if (item == null) return false;
+
+        ItemInstance instance = item.GetComponent<ItemInstance>();
+        return instance != null && instance.sticky;
+    }
+
+    /// <summary>끈적끈적하게 만들거나 되돌린다.</summary>
+    public static void SetSticky(GameObject item, bool value)
+    {
+        if (item == null) return;
+
+        ItemInstance instance = item.GetComponent<ItemInstance>();
+        if (instance != null) instance.sticky = value;
+    }
 
     /// <summary>컴포넌트가 없으면 0.</summary>
     public static int EnhancementOf(GameObject item)

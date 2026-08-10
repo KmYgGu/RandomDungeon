@@ -97,16 +97,17 @@ MonoBehaviour:
   blockingLayer:
     serializedVersion: 2
     m_Bits: 64
-  tilemap: {fileID: 0}
-  impassableTileNames: []
+  isSpecialState: 0
+  directionsprites: []
   childTransform: {fileID: 0}
   spriteRenderer: {fileID: 0}
-  Delay: 0
-  connectionPoints: []
-  isPatrolTargetSet: 0
-  closestPoint: {x: 0, y: 0, z: 0}
   roomdata: []
+  connectionPoints: []
   ThisHp: 0
+  currentMode: 1
+  isPatrolTargetSet: 0
+  patrolTarget: {x: 0, y: 0, z: 0}
+  description: {fileID: 11400000, guid: 1b8f874698efe9346a95c24ad8aed840, type: 2}
 --- !u!1 &2555930700642473880
 GameObject:
   m_ObjectHideFlags: 0

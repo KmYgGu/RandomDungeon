@@ -12,8 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0a142a8e0458fea4a820777050d12781, type: 3}
   m_Name: "\uC0AC\uACFC"
   m_EditorClassIdentifier: 
+  id: 20001
   sprites: {fileID: 3658704709496486832, guid: 6369a4e8de5ed224d9503ca1f505317d, type: 3}
-  itemName: "\uC0AC\uACFC"
-  description: "\uB9CC\uBCF5\uB3C4\uB97C 30 \uD68C\uBCF5\uD569\uB2C8\uB2E4."
-  SellPrice: 50
-  itemType: 0
