@@ -57,11 +57,11 @@ public class StatusView
     /// 남는 것은 만복도 · 경험치 · 힘 · 이번 층의 턴수 넷뿐이고,
     /// 그래서 글자를 크게 키울 수 있다.
     /// </summary>
-    public void Render(PlayerStats stats, Equipment gear, ItemCatalog catalog, int turnCount)
+    public void Render(PlayerStats stats, Equipment gear, int turnCount)
     {
-        RenderSlot(weaponIcon, weaponEnhance, gear.Weapon, catalog);
-        RenderSlot(armorIcon, armorEnhance, gear.Armor, catalog);
-        RenderSlot(accessoryIcon, accessoryEnhance, gear.Accessory, catalog);
+        RenderSlot(weaponIcon, weaponEnhance, gear.Weapon);
+        RenderSlot(armorIcon, armorEnhance, gear.Armor);
+        RenderSlot(accessoryIcon, accessoryEnhance, gear.Accessory);
 
         if (leftColumn != null)
             leftColumn.text = $"힘      {stats.Strength}/{stats.MaxStrength}\n만복도  {stats.Hunger}/{stats.MaxHunger}";
@@ -72,9 +72,9 @@ public class StatusView
 
     /// <summary>슬롯 하나. 장비 이미지와 그 위의 강화 수치.</summary>
     private static void RenderSlot(
-        Image icon, TextMeshProUGUI enhanceLabel, GameObject item, ItemCatalog catalog)
+        Image icon, TextMeshProUGUI enhanceLabel, GameObject item)
     {
-        ItemDescription description = item != null ? catalog.Find(item.name) : null;
+        ItemDescription description = ItemInstance.DescriptionOf(item);
 
         if (icon != null)
         {

@@ -47,12 +47,6 @@ public class Enemy : MovingObject
     /// <summary>공격이 맞을 확률(10%는 빗나감).</summary>
     private const float HitChance = 0.9f;
 
-    private static readonly Vector2[] EightDirections =
-    {
-        Vector2.up, Vector2.down, Vector2.left, Vector2.right,
-        new Vector2(1, 1), new Vector2(-1, 1), new Vector2(1, -1), new Vector2(-1, -1),
-    };
-
     private static readonly Vector2[] CardinalDirections =
     {
         Vector2.up, Vector2.down, Vector2.left, Vector2.right,
@@ -79,6 +73,31 @@ public class Enemy : MovingObject
     /// <summary>같은 자리를 맴돌지 않도록 이미 지나온 칸을 기억한다.</summary>
     private readonly List<Vector2> visited = new List<Vector2>();
 
+    /// <summary>
+    /// 이번 턴에 이미 자리를 옮겼는가. 턴이 시작될 때 바깥에서 지운다.
+    ///
+    /// 옮긴 적은 <b>찜해 둔 칸</b>으로 표현되므로, 옛 자리는 비어 있는 것으로 봐야
+    /// 뒤따르는 적이 그 칸을 이어받을 수 있다. 이것이 없으면 도망치는 플레이어를
+    /// 쫓을 때 두 번째 적이 한 칸씩 뒤처진 채로 따라온다.
+    /// </summary>
+    public bool MovedThisTurn { get; private set; }
+
+    /// <summary>이번 턴의 이동 기록을 지운다. GameManager 가 턴을 시작할 때 부른다.</summary>
+    public void BeginTurn() => MovedThisTurn = false;
+
+    /// <summary>플레이어까지의 걸음 수. 지도가 없으면 직선 거리로 어림한다.</summary>
+    public float StepsToPlayer
+    {
+        get
+        {
+            if (GameManager.Chase.IsReady
+                && GameManager.Chase.TryGetDistance(transform.position, out int steps))
+                return steps;
+
+            return Vector2.Distance(transform.position, PlayerPosition);
+        }
+    }
+
     protected override void Start()
     {
         var dungeon = FindObjectOfType<RandomDung>();
@@ -87,7 +106,10 @@ public class Enemy : MovingObject
 
         GameManager.instance.AddEnemyToList(this);
 
+        // base.Start() 가 자식에서 SpriteRenderer 를 찾아 두므로 그 뒤에 입힌다.
         base.Start();
+
+        if (description != null) SpriteApplier.Apply(gameObject, description.sprite);
     }
 
     private Vector2 PlayerPosition => GameManager.instance.Player.transform.position;
@@ -255,11 +277,27 @@ public class Enemy : MovingObject
             Vector2 destination = origin + direction;
             if (!CanOccupy(destination, direction, rememberPath)) continue;
 
-            // 같은 턴의 다른 적이 이 칸을 노리지 않도록 미리 찜해 둔다.
+            // 갈 수 있는지는 위에서 다 봤으므로 그대로 옮긴다.
+            //
+            // ── 왜 Move() 를 쓰지 않는가 ──────────────────────────────
+            // Move() 는 Linecast 로 한 번 더 막는데, blockingLayer 에 들어 있는
+            // 것은 생물(레이어 6)뿐이라 벽·물 판정은 이미 CanOccupy 가 한 것과
+            // 겹친다. 남는 것은 "다른 생물이 있는가" 인데, 그 판정이 문제였다.
+            //
+            // 한 턴의 이동은 모두 같은 프레임에 일어나고 Rigidbody2D 는 다음 물리
+            // 갱신에야 좌표를 옮긴다. 그래서 앞선 적이 이미 비우기로 한 칸도 그
+            // 프레임에는 콜라이더가 남아 있어 Linecast 에 걸렸다. 뒤따르던 적은
+            // 그 칸에 못 들어가고, 도망치는 플레이어를 쫓을 때 한 칸씩 벌어졌다.
+            //
+            // 이제 "누가 있는가" 는 찜한 칸과 아직 안 움직인 적으로 판단한다
+            // (IsEnemyAt · IsPlayerAt). 물리에 묻지 않으므로 프레임 순서를 타지 않는다.
+            MoveTo(destination);
+            MovedThisTurn = true;
+
+            // 같은 턴의 다른 적이 이 칸을 노리지 않도록 찜해 둔다.
             GameManager.instance.enemyPositions.Add(destination);
             if (rememberPath) visited.Add(destination);
 
-            Move(direction, out _);
             return true;
         }
 
@@ -269,6 +307,7 @@ public class Enemy : MovingObject
     private bool CanOccupy(Vector2 destination, Vector2 direction, bool rememberPath)
     {
         if (IsEnemyAt(destination)) return false;
+        if (IsPlayerAt(destination)) return false;
         if (IsBlockedByTile(destination)) return false;
         if (IsBlockedByWater(destination)) return false;
         if (!CanMoveDiagonally(transform.position, direction)) return false;
@@ -407,7 +446,7 @@ public class Enemy : MovingObject
         Vector2 origin = transform.position;
         Vector2 playerPosition = PlayerPosition;
 
-        foreach (Vector2 direction in EightDirections)
+        foreach (Vector2 direction in GridUtil.EightDirections)
         {
             Vector2 checkPosition = origin + direction;
 
@@ -434,7 +473,7 @@ public class Enemy : MovingObject
         Vector2 toPlayer = (Vector2)(player.transform.position - transform.position);
 
         yield return LungeTowards(toPlayer);
-        player.Damaged(attackPower, transform.position);
+        player.Damaged(attackPower, transform.position, CriticalPercent);
         yield return new WaitForFixedUpdate();
     }
 
@@ -444,9 +483,25 @@ public class Enemy : MovingObject
         currentMode = EnemyMode.Chase;
 
         var player = GameManager.instance.Player.GetComponent<Player>();
-        if (player != null) player.Damaged(attackPower, transform.position);
+        if (player != null) player.Damaged(attackPower, transform.position, CriticalPercent);
     }
 
+    /// <summary>
+    /// 이 칸에 다른 적이 있는가.
+    ///
+    /// 두 가지를 함께 본다 —
+    ///   이번 턴에 다른 적이 <b>찜해 둔</b> 칸(enemyPositions)
+    ///   지금 실제로 <b>서 있는</b> 적
+    ///
+    /// 예전에는 찜한 칸만 봤다. 그런데 때리는 적은 움직이지 않아 아무것도 찜하지
+    /// 않으므로, 뒤의 적이 그 칸을 고르고 물리에 막혀 제자리에 서 버렸다.
+    ///
+    /// 서 있는 자리까지 보는 이유가 하나 더 있다. 한 턴의 이동은 모두 같은
+    /// 프레임에 일어나는데(MoveEnemies), Rigidbody2D 는 다음 물리 갱신에야
+    /// 좌표를 옮긴다. 그래서 그 프레임 동안에는 <b>이미 움직인 적도 아직 옛
+    /// 자리에 서 있고</b>, 그 칸으로 들어가려는 시도는 어차피 물리에 막힌다.
+    /// 미리 걸러서 다음 방향을 시도하게 하는 편이 낫다.
+    /// </summary>
     private bool IsEnemyAt(Vector2 position)
     {
         foreach (Vector2 reserved in GameManager.instance.enemyPositions)
@@ -454,8 +509,31 @@ public class Enemy : MovingObject
             if (Vector2.Distance(position, reserved) < SameCellThreshold)
                 return true;
         }
+
+        foreach (Enemy other in GameManager.instance.enemies)
+        {
+            if (other == null || other == this) continue;
+            if (!other.gameObject.activeInHierarchy) continue;
+
+            // 이미 옮긴 적은 찜한 칸으로 표현된다. 옛 자리까지 막으면
+            // 뒤따르는 적이 그 칸을 이어받지 못해 한 칸씩 벌어진다.
+            if (other.MovedThisTurn) continue;
+
+            if (Vector2.Distance(position, other.transform.position) < SameCellThreshold)
+                return true;
+        }
+
         return false;
     }
+
+    /// <summary>
+    /// 그 칸에 플레이어가 있는가.
+    ///
+    /// 예전에는 Move() 의 Linecast 가 함께 걸러 주었다. 그것을 쓰지 않게 되면서
+    /// 여기서 직접 본다 — 빠뜨리면 적이 플레이어를 밟고 지나간다.
+    /// </summary>
+    private bool IsPlayerAt(Vector2 position)
+        => Vector2.Distance(position, PlayerPosition) < SameCellThreshold;
 
     public override void SetStats(int hp, int attack, int defenseValue)
     {
@@ -512,7 +590,55 @@ public class Enemy : MovingObject
     }
 
     /// <summary>메시지에 쓰는 이름. 프리팹 복제본 표시를 뗀 것.</summary>
-    public string DisplayName => gameObject.name.Replace("(Clone)", string.Empty);
+    /// <summary>
+    /// 이 적이 어느 종류인가. 이름·수치·경험치가 전부 여기서 나온다.
+    ///
+    /// 예전에는 GameObject 이름이 곧 신원이었고 수치는 DungeonPopulator 에
+    /// 박혀 있었다. 그래서 Monster 시트에 hp/atk/def/exp 를 적어 두어도
+    /// 아무 데도 쓰이지 않았다.
+    /// </summary>
+    public MonsterDescription description;
+
+    /// <summary>
+    /// 화면에 보이는 이름.
+    ///
+    /// 정의가 아직 연결되지 않은 프리팹이 있을 수 있어 GameObject 이름으로
+    /// 물러선다. 전부 연결하고 나면 이 뒷길은 지워도 된다.
+    /// </summary>
+    public string DisplayName => description != null
+        ? description.DisplayName
+        : gameObject.name.Replace("(Clone)", string.Empty);
+
+    /// <summary>
+    /// 이 적이 치명타를 낼 확률(%). 정의가 없으면 0 — 치명타를 내지 않는다.
+    ///
+    /// 기본이 0 인 것이 중요하다. 모든 적이 치명타를 내면 맞는 쪽에서는 피해 폭이
+    /// 넓은 것으로만 보이고, "저 녀석은 조심해야 한다" 가 성립하지 않는다.
+    /// </summary>
+    public int CriticalPercent
+    {
+        get
+        {
+            MonsterDefinition definition = description != null ? description.Definition : null;
+            return definition != null ? definition.CriticalPercent : 0;
+        }
+    }
+
+    /// <summary>
+    /// 쓰러뜨렸을 때 주는 경험치.
+    ///
+    /// 시트에 없으면 옛 방식(공격력 + 방어력)으로 돌아간다. 그때는 수치가
+    /// 곧 경험치였는데, 그러면 "약하지만 경험치가 짭짤한 적" 같은 것을
+    /// 만들 수 없어서 시트가 따로 정하게 했다.
+    /// </summary>
+    public int ExpReward
+    {
+        get
+        {
+            MonsterDefinition definition = description != null ? description.Definition : null;
+            return definition != null ? definition.Exp : attackPower + defense;
+        }
+    }
 
     // ── 정체를 숨기고 있는가 ───────────────────────────────────────────────
     //
@@ -566,11 +692,10 @@ public class Enemy : MovingObject
     {
         if (ThisHp > 0) return;
 
-        string enemyName = gameObject.name.Replace("(Clone)", string.Empty);
-        gameObject.name = enemyName;
+        gameObject.name = gameObject.name.Replace("(Clone)", string.Empty);
 
         GameManager.instance.RemoveEnemyList(this);
-        GameManager.instance.RewardForKill(enemyName, attackPower + defense);
+        GameManager.instance.RewardForKill(DisplayName, ExpReward);
 
         gameObject.SetActive(false);
     }

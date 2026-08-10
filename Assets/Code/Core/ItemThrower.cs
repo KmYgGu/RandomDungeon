@@ -108,7 +108,6 @@ public class ItemThrower
     /// </summary>
     public IEnumerator Throw(
         GameObject item,
-        string itemName,
         Vector2 direction,
         PlayerStats stats,
         Action<GameMessage?> onFinished)
@@ -145,7 +144,7 @@ public class ItemThrower
 
         if (shot.HitTarget)
         {
-            ApplyHit(living[shot.TargetIndex], item, itemName, stats);
+            ApplyHit(living[shot.TargetIndex], item, stats);
 
             // 맞은 아이템은 소모된다.
             UnityEngine.Object.Destroy(item);
@@ -196,7 +195,7 @@ public class ItemThrower
     /// (회복 아이템을 던지면 적이 회복되고, 능력치 아이템을 던지면 적이 강해진다.)
     /// 전투·생존과 무관한 아이템은 그냥 맞은 만큼 아프다 — 힘에 비례한 피해.
     /// </summary>
-    private static void ApplyHit(Enemy target, GameObject item, string itemName, PlayerStats stats)
+    private static void ApplyHit(Enemy target, GameObject item, PlayerStats stats)
     {
         // 돈은 아이템이 아니라 재화다. 액수를 10 으로 나눈 만큼이,
         // 방어력을 무르고 그대로 들어간다.
@@ -206,7 +205,10 @@ public class ItemThrower
             return;
         }
 
-        ThrownEffect effect = ItemEffects.GetThrownEffect(itemName, out int amount);
+        // 어떤 아이템인지는 오브젝트가 직접 들고 다닌다. 이름으로 찾던 시절에는
+        // 이 자리에 이름을 따로 들고 와야 했다.
+        ThrownEffect effect =
+            ItemEffects.GetThrownEffect(ItemInstance.IdOf(item), out int amount);
 
         switch (effect)
         {

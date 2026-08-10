@@ -2906,13 +2906,17 @@ MonoBehaviour:
   - {fileID: 7292529403319920058, guid: 20ff57dc89ce6874ca6764ce1e8af615, type: 3}
   - {fileID: 6185270158629920251, guid: ca59f6358679e6348bf777dcfa30a41f, type: 3}
   - {fileID: 1951987458833874558, guid: a235f0445e9de1a40a07a7b45e05c033, type: 3}
+  - {fileID: 7973278369485363256, guid: f00400f42ab03fc4f87ffb36a1e81d06, type: 3}
+  - {fileID: 8408474335853594547, guid: 267f1bd4f85f5c94eab64f2942bb006d, type: 3}
+  - {fileID: 549974017017043371, guid: 3def12e7523fd1e49928cb052bc08bc5, type: 3}
   trapPrefabs:
   - {fileID: 7679740915587192995, guid: 3084ab8e60e8401488a72b0ee9d9bc52, type: 3}
   - {fileID: 7135373871475082773, guid: 5f4ea435fe67c0e4dae3c83a204b979f, type: 3}
   - {fileID: 8014747136003154633, guid: dbb825c7784340746a35f5c808069bd8, type: 3}
   - {fileID: 4962606881301104535, guid: 8848efd166428894b8d9cc635b95e39d, type: 3}
   - {fileID: 1318019098584157873, guid: 73bc93b124fffea4eb8b7c5cb898673e, type: 3}
-  - {fileID: 4464033237324205709, guid: 39dc0a9cac9e60c49b1295450ad1ee35, type: 3}
+  - {fileID: 2127632079877684650, guid: 39dc0a9cac9e60c49b1295450ad1ee35, type: 3}
+  - {fileID: 5085370050522074086, guid: 90f0010bb231f7745af332c7d1b9c6ac, type: 3}
   stairsPrefab: {fileID: 2869776855745267099, guid: 53322a7121b9c6b4284ed2c8340e2509, type: 3}
   itemWeights:
   - 3
@@ -2926,6 +2930,8 @@ MonoBehaviour:
   floorTile2: {fileID: 11400000, guid: 9301bac503da5024f8f411f99f2c1b7b, type: 2}
   wallTile: {fileID: 11400000, guid: ba824028b6e839c48a7faff445d3b327, type: 2}
   waterTile: {fileID: 11400000, guid: ee6c17109cfcb894c867279409fe00c4, type: 2}
+  bedrockTile: {fileID: 11400000, guid: 5267583f688c55e4a85f3f7986047358, type: 2}
+  bedrockWaterTile: {fileID: 11400000, guid: 859f7a922acb0904e81728fae5c4c7c2, type: 2}
   minimapTile: {fileID: 11400000, guid: 307a78ca0ca57fd40bcc7fe0d2796347, type: 2}
   EntranceTile: {fileID: 11400000, guid: cccd74bd4b095f340bb5a598ffc1d06f, type: 2}
   minMonstersPerRoom: 0
@@ -2948,11 +2954,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   MapMake: {fileID: 1117532426}
-  allItemDescriptions:
-  - {fileID: 11400000, guid: 18767c854c5994942898f6b8b9799a92, type: 2}
-  - {fileID: 11400000, guid: 1adf253d583f54a4fbaa4640c7099e3f, type: 2}
-  - {fileID: 11400000, guid: a8b470fd6ea1d234580eb51f18de52cd, type: 2}
-  - {fileID: 11400000, guid: 192500cf4b3ce5544a30e60fd9bf7901, type: 2}
   LevelImage: {fileID: 1205580082}
   UiCanvas: {fileID: 1961071541}
   Player: {fileID: 0}

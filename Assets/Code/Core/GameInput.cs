@@ -71,6 +71,20 @@ public static class GameInput
         }
     }
 
+    /// <summary>
+    /// 두 버튼을 <b>지금 함께 누르고 있는가.</b>
+    ///
+    /// WaitRequested 는 누른 그 순간에만 참이라, 여러 턴을 쉬려면 같은 손짓을
+    /// 반복해야 했다. 이쪽은 누르고 있는 동안 계속 참이라 대기가 이어진다.
+    ///
+    /// Consume() 은 Pressed·Tapped 만 지우고 Held 는 건드리지 않으므로,
+    /// 매 턴 소비해도 이 값은 그대로 남는다.
+    /// </summary>
+    public static bool WaitHeld
+    {
+        get { EnsurePolled(); return action.Held && assist.Held; }
+    }
+
     /// <summary>메뉴 커서 이동. 위 -1, 아래 +1, 없으면 0.</summary>
     public static int MenuStep { get { EnsurePolled(); return menuStep; } }
 

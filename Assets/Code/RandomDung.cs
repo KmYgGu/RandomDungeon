@@ -36,9 +36,6 @@ public class RandomDung : MonoBehaviour
     public GameObject[] trapPrefabs;
     public GameObject stairsPrefab;
 
-    /// <summary>itemPrefabs 와 같은 순서로 대응하는 등장 가중치.</summary>
-    public float[] itemWeights = { 5f, 5f, 5f, 2f, 1f };
-
     [Header("타일맵")]
     public Tilemap floorTilemap;
     public Tilemap Minimap;
@@ -48,6 +45,12 @@ public class RandomDung : MonoBehaviour
     public TileBase floorTile2;
     public TileBase wallTile;
     public TileBase waterTile;
+
+    /// <summary>맵 끝자락. 비워 두면 보통 벽으로 대신한다(TileRules.BedrockTileNames).</summary>
+    public TileBase bedrockTile;
+
+    /// <summary>물로 가득한 층의 맵 끝자락. 비워 두면 위 것으로 대신한다.</summary>
+    public TileBase bedrockWaterTile;
     public TileBase minimapTile;
 
     /// <summary>방의 출입구(문)에 칠할 타일. 반드시 통행 가능한 타일이어야 한다.</summary>
@@ -73,6 +76,14 @@ public class RandomDung : MonoBehaviour
     /// <summary>적이 "방 안에 있는지" 판정할 때 쓰는 방 안쪽 영역들.</summary>
     public List<Rect> RoomData { get; private set; } = new List<Rect>();
 
+    /// <summary>
+    /// 방들의 안쪽 칸(칸 좌표). 게임 규칙이 자리를 고를 때 쓴다.
+    ///
+    /// RoomData 와 같은 방을 가리키지만 이쪽은 정수다. 월드 좌표로 자리를
+    /// 고르면 칸 중심의 0.5 때문에 조용히 어긋난다.
+    /// </summary>
+    public List<RectInt> RoomCells { get; private set; } = new List<RectInt>();
+
     public Vector3Int GetStairsPosition() => populator != null ? populator.StairsPosition : default;
 
     /// <summary>한 층을 처음부터 끝까지 만든다.</summary>
@@ -86,7 +97,7 @@ public class RandomDung : MonoBehaviour
         layout = new DungeonLayout();
         populator = new DungeonPopulator(
             painter, GameManager.Ground,
-            itemPrefabs, itemWeights, trapPrefabs,
+            itemPrefabs, trapPrefabs,
             monsterPrefab, stairsPrefab, playerPrefab);
 
         // 1. 방을 흩뿌리고(일부는 보물방·몬스터 하우스로 정해진다) 바닥을 칠한다.
@@ -110,10 +121,16 @@ public class RandomDung : MonoBehaviour
         new WaterwayDecorator(painter, layout).Decorate();
 
         // 5. 아직 빈 칸을 벽(드물게 물)으로 메운다.
-        painter.FillEmptySpace(mapWidth, mapHeight, Random.value < FloodedStageChance);
+        bool flooded = Random.value < FloodedStageChance;
+        painter.FillEmptySpace(mapWidth, mapHeight, flooded);
+
+        // 바깥은 허물 수 없게 두껍게 둘러 둔다. 맵 밖으로 나가면 돌아올 길이 없고,
+        // 얇게 두르면 가장자리에서 카메라 배경색이 그대로 보인다.
+        painter.PaintBorder(mapWidth, mapHeight, flooded);
 
         // 6. 적이 쓸 정보를 넘겨 준다. 통로를 다 판 뒤라야 문이 확정된다.
         RoomData = layout.InteriorRects();
+        RoomCells = layout.InteriorCellRects();
         edgePoints = layout.DoorWorldPositions();
 
         // 7. 계단을 먼저 정한다. 아이템 배치가 계단 위치를 피해야 하기 때문이다.
@@ -149,7 +166,8 @@ public class RandomDung : MonoBehaviour
 
         return new DungeonTilePainter(
             floorTilemap, Minimap,
-            floorTile, floorTile2, EntranceTile, wallTile, waterTile, minimapTile);
+            floorTile, floorTile2, EntranceTile, wallTile, waterTile,
+            bedrockTile, bedrockWaterTile, minimapTile);
     }
 
     /// <summary>방 안쪽만 바닥으로 칠한다. 테두리는 벽으로 남겨 두고, 문만 나중에 뚫는다.</summary>

@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -17,7 +18,6 @@ using TMPro;
 /// "언제 누구를 부를지" 만 정한다.
 ///   PlayerStats        - 플레이어 수치와 그 규칙
 ///   Inventory          - 가방의 내용과 용량
-///   ItemCatalog        - 아이템 이름 → 설명 조회
 ///   ItemEffects        - 아이템을 쓰면 일어나는 일
 ///   GroundObjectRegistry - 바닥에 놓인 물건의 위치
 ///   HudView / MessageBoxView / PanelView / StatusView - 화면 표시
@@ -34,7 +34,6 @@ public class GameManager : MonoBehaviour
     // ── Inspector 연결 (이름을 바꾸면 씬의 연결이 끊기므로 그대로 둔다) ────────
     //    공용 창 관련 필드는 씬 파일을 함께 고쳐서 이름을 바꿔 두었다.
     public RandomDung MapMake;
-    public ItemDescription[] allItemDescriptions;
 
     public GameObject LevelImage;
     public GameObject UiCanvas;
@@ -114,6 +113,34 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public static ChaseMap Chase { get; private set; } = new ChaseMap();
 
+    /// <summary>
+    /// 메시지 창을 지나간 글의 이력. 상태창의 '로그' 가 읽는다.
+    ///
+    /// 층을 넘어가도 이어져야 한다. 아래층으로 내려가는 순간 이력이 끊기면
+    /// 정작 되짚어 보고 싶은 직전 몇 수가 함께 사라진다.
+    ///
+    /// 바꿔 끼울 수 없게 읽기 전용으로 두었다. 메시지 창이 이 객체를 그대로
+    /// 들고 있어서, 새 것으로 갈아 끼우면 창은 지난 판의 것에 계속 쌓는다.
+    /// 판을 새로 시작할 때는 ResetRun() 이 비운다.
+    /// </summary>
+    public static MessageLog Log { get; } = new MessageLog();
+
+    /// <summary>
+    /// 지금 걸려 있는 상태이상. 함정 · 아이템 · 능력이 모두 여기에 건다.
+    ///
+    /// 판 단위 상태라 층을 넘어가도 이어진다. ResetRun() 이 비운다.
+    /// Log 와 같은 이유로 읽기 전용이다 — 갈아 끼우면 걸어 둔 곳과 보는 곳이 갈린다.
+    /// </summary>
+    public static ConditionTracker Conditions { get; } = new ConditionTracker();
+
+    /// <summary>
+    /// 아이템 종류마다 손으로 붙여 둔 표식. 가방·바닥 표시가 이것을 읽는다.
+    ///
+    /// 그 판에서 알아낸 것이라 층을 넘어가도 남고 새 판에서 지워진다.
+    /// Log 와 같은 이유로 읽기 전용이다 — 갈아 끼우면 적어 둔 곳과 보는 곳이 갈린다.
+    /// </summary>
+    public static MarkBook Marks { get; } = new MarkBook();
+
     public static int Stage { get; private set; }
     public static int TurnCount { get; private set; }
 
@@ -134,6 +161,28 @@ public class GameManager : MonoBehaviour
     /// 달리는 도중에 따라잡혀 맞는 일도 그대로 일어난다. 눈에 보이는 시간만 사라진다.
     /// </summary>
     public static bool FastForward { get; set; }
+
+    /// <summary>
+    /// 워프·날리기처럼 캐릭터를 강제로 옮기는 연출이 도는 중인가.
+    ///
+    /// 적 턴은 이것이 끝나기를 기다린다(MoveEnemies). 그러지 않으면 아직 옮겨지는
+    /// 중인 플레이어를 놓고 적이 "지난 자리" 를 기준으로 움직이고 때린다.
+    /// 실제로 발밑 명령으로 워프 함정을 밟았을 때 옆에 있던 적이 빈 칸을 때렸다.
+    ///
+    /// ── 이 한 겹으로 충분한 이유 ──────────────────────────────────
+    /// 코루틴은 첫 yield 까지 동기로 실행된다. 강제 이동은 갈 곳을 먼저 계산하고
+    /// <b>연출을 시작하기 전에</b> 이 표시를 세우므로, 뒤이어 불리는
+    /// EndPlayerTurn() 이 적 턴을 시작할 때는 이미 서 있다.
+    ///
+    ///   TryTrigger() → StartCoroutine(WarpPlayer())   ← 여기서 표시가 선다
+    ///   EndPlayerTurn() → MoveEnemies()               ← 그래서 곧바로 기다린다
+    ///
+    /// 그래서 적이 때리기 직전에 "아직 옆에 있나" 를 다시 볼 필요가 없다.
+    /// 한때 그 재확인도 함께 두었는데, 어느 쪽이 실제로 막고 있는지 알 수 없어졌다.
+    ///
+    /// 함정만이 아니라 지팡이·능력으로 옮길 때도 같은 표시를 쓴다.
+    /// </summary>
+    public static bool ForcedMoveRunning { get; private set; }
     // ──────────────────────────────────────────────────────────────────────
 
     public bool playersTurn = true;
@@ -147,7 +196,6 @@ public class GameManager : MonoBehaviour
     private StatusView statusView;
     private PanelView menuPanel;
     private StarvingTint starvingTint;
-    private ItemCatalog itemCatalog;
 
     /// <summary>게임 오버 처리를 이미 시작했는가. 죽음은 여러 곳에서 알려 온다.</summary>
     private bool gameOverStarted;
@@ -197,7 +245,7 @@ public class GameManager : MonoBehaviour
             DetailImage, DetailName, DetailPrice, DetailText);
 
         messageBox = new MessageBoxView(
-            this, panel, TextimageBox, AttackTextMeshPro, menuPanel);
+            this, panel, TextimageBox, AttackTextMeshPro, menuPanel, Log);
 
         statusView = new StatusView(
             StatusPanel,
@@ -209,10 +257,9 @@ public class GameManager : MonoBehaviour
         // 굶는 동안 화면의 모든 글자에 테를 두른다.
         starvingTint = new StarvingTint(UiCanvas);
 
-        itemCatalog = new ItemCatalog(allItemDescriptions);
 
         // 장비는 씬을 넘어가도 유지되므로 한 번만 만든다.
-        if (Gear == null) Gear = new Equipment(itemCatalog);
+        if (Gear == null) Gear = new Equipment();
 
         statusView.SetVisible(false);
         menuPanel.Hide();
@@ -233,7 +280,7 @@ public class GameManager : MonoBehaviour
     private IEnumerator ShowStatusUntilClosed()
     {
         statusView.SetVisible(true);
-        statusView.Render(Stats, Gear, itemCatalog, TurnCount);
+        statusView.Render(Stats, Gear, TurnCount);
 
         // 메뉴가 열려 있는 동안 턴은 흐르지 않으므로 수치는 한 번만 그리면 된다.
         StatusMenu? chosen = null;
@@ -266,8 +313,11 @@ public class GameManager : MonoBehaviour
                 StartCoroutine(ShowConditions());
                 break;
 
-            case StatusMenu.Encyclopedia:
             case StatusMenu.Log:
+                StartCoroutine(ShowLog());
+                break;
+
+            case StatusMenu.Encyclopedia:
             case StatusMenu.Records:
             case StatusMenu.Abort:
                 messageBox.Show($"{StatusMenuCatalog.LabelOf(menu)}은(는) 아직 준비되지 않았다.");
@@ -276,25 +326,30 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>
-    /// 상태 화면. 지금 걸려 있는 것들을 큰 판에 늘어놓는다.
+    /// 여러 줄을 큰 판에 늘어놓고 상하 방향키로 넘겨 보는 화면.
+    /// 상태와 로그가 같은 흐름을 쓴다.
     ///
-    /// 판에 다 안 들어가면 상하 방향키로 넘겨 본다. 몇 줄이 들어가는지는
-    /// 글꼴과 화면 비율에 달렸으므로 매 프레임 다시 물어본다 —
-    /// 창 크기가 바뀌어도 스크롤이 어긋나지 않는다.
+    /// 판에 몇 줄이 들어가는지는 글꼴과 화면 비율에 달렸으므로 매 프레임 다시
+    /// 물어본다 — 창 크기가 바뀌어도 스크롤이 어긋나지 않는다.
+    /// 반대로 줄 수는 열 때 한 번만 받는다. 이 화면이 떠 있는 동안에는 턴이
+    /// 흐르지 않아 내용이 늘거나 줄지 않기 때문이다.
     /// </summary>
-    private IEnumerator ShowConditions()
+    /// <param name="lineCount">늘어놓을 줄 수. 스크롤이 넘어갈 범위를 정한다.</param>
+    /// <param name="buildText">(시작 줄, 담을 줄 수) → 판에 채울 글자.</param>
+    /// <param name="startOffset">처음 보여 줄 자리. int.MaxValue 면 맨 끝에서 시작한다.</param>
+    private IEnumerator ShowScrollingPage(
+        int lineCount, Func<int, int, string> buildText, int startOffset)
     {
         InputFocus.Give(InputOwner.Prompt);
 
-        List<ConditionDefinition> active = ConditionReport.Active(Stats);
-        int offset = 0;
+        int offset = startOffset;
 
         while (true)
         {
             int capacity = menuPanel.PageLineCapacity;
-            offset = ConditionReport.ClampOffset(offset, active.Count, capacity);
+            offset = PageScroll.ClampOffset(offset, lineCount, capacity);
 
-            menuPanel.ShowPage(ConditionReport.BuildText(active, offset, capacity));
+            menuPanel.ShowPage(buildText(offset, capacity));
 
             // 이 화면을 연 그 키가 곧바로 닫아 버리지 않도록 한 프레임 넘긴다.
             yield return null;
@@ -306,6 +361,28 @@ public class GameManager : MonoBehaviour
 
         menuPanel.Hide();
         InputFocus.ReturnToPlayer();
+    }
+
+    /// <summary>상태 화면. 지금 걸려 있는 것들을 위에서부터 늘어놓는다.</summary>
+    private IEnumerator ShowConditions()
+    {
+        List<ConditionDefinition> active = ConditionReport.Active(Stats, Conditions);
+
+        return ShowScrollingPage(
+            active.Count,
+            (offset, capacity) => ConditionReport.BuildText(active, offset, capacity),
+            startOffset: 0);
+    }
+
+    /// <summary>
+    /// 로그 화면. 메시지 창을 지나간 글을 오래된 것부터 늘어놓는다.
+    ///
+    /// 맨 끝에서 시작한다. 이 화면을 여는 이유는 대개 "방금 무엇에 맞았지" 라서,
+    /// 열자마자 직전 몇 줄이 보여야 한다. 위로 올릴수록 과거로 간다.
+    /// </summary>
+    private IEnumerator ShowLog()
+    {
+        return ShowScrollingPage(Log.Count, Log.BuildText, startOffset: int.MaxValue);
     }
 
     private void Update()
@@ -350,12 +427,18 @@ public class GameManager : MonoBehaviour
         // 장비는 아이템 목록이 있어야 만들 수 있다. 곧 BuildCollaborators 가 만든다.
         Gear = null;
 
+        // 새 객체로 갈아 끼우지 않고 비운다 — 위 Log 의 설명 참고.
+        Log.Clear();
+        Conditions.Clear();
+        Marks.Clear();
+
         Stage = 0;              // 뒤이어 StartNextStage() 가 1층으로 올린다.
         TurnCount = 0;
         FloorTilemap = null;
         LookDirection = Vector2.down;
         InteractionHandled = false;
         FastForward = false;
+        ForcedMoveRunning = false;
 
         InputFocus.Reset();
         GameInput.Reset();
@@ -467,9 +550,52 @@ public class GameManager : MonoBehaviour
         messageBox.Show(MessageCatalog.Format(message, name, amount, secondName));
     }
 
+    /// <summary>
+    /// 이미 만들어진 글을 그대로 띄운다.
+    ///
+    /// MessageCatalog 를 거치지 않는 길이라 함부로 쓰면 문구가 코드 곳곳으로
+    /// 흩어진다. 시트에서 읽어 온 글처럼 <b>문구를 코드가 정하지 않는 경우</b>에만 쓴다.
+    /// </summary>
+    public void ShowText(string text)
+    {
+        messageBox.Show(text);
+    }
+
+    /// <summary>
+    /// 같은 글이 방금 떠 있었으면 다시 띄우지 않는다.
+    ///
+    /// 잠든 동안처럼 <b>매 턴 같은 말을 해야 하는</b> 경우에 쓴다. 그대로 띄우면
+    /// 이력이 같은 줄로 가득 차고, 화면에서는 이미 있는 글을 다시 그리기만 한다.
+    ///
+    /// 사이에 다른 일이 끼면(적에게 맞는 등) 그 글이 마지막이 되므로 다시 뜬다.
+    /// 그래야 "맞았다 → 그래도 자고 있다" 가 이어서 읽힌다.
+    /// </summary>
+    public void ShowMessageUnlessRepeated(GameMessage message, string name = null, int amount = 0)
+    {
+        string text = MessageCatalog.Format(message, name, amount);
+        if (messageBox.LastShown == text) return;
+
+        messageBox.Show(text);
+    }
+
+    /// <summary>
+    /// 두 줄을 한 상자에 담아 띄운다.
+    ///
+    /// 잇달아 Show 를 두 번 부르면 앞의 것이 곧바로 덮여 읽을 수 없다.
+    /// "무엇이 일어났고 그래서 어떻게 됐다" 처럼 짝을 이루는 글에 쓴다.
+    /// </summary>
+    public void ShowTwoLines(string first, string second)
+    {
+        messageBox.Show(first + "\n" + second);
+    }
+
     /// <summary>적을 쓰러뜨렸을 때: 경험치를 주고, 레벨업했으면 그것도 알린다.</summary>
     public void RewardForKill(string enemyName, int exp)
     {
+        // 장비가 경험치를 더 얹어 준다. 표시되는 값도 함께 늘어야
+        // "왜 도감의 3 보다 많이 들어오지" 가 되지 않는다.
+        exp += Gear != null ? Gear.AbilityValue(EquipAbility.BonusExp) : 0;
+
         ShowMessage(GameMessage.EnemyDefeated, enemyName, exp);
 
         if (Stats.AddExp(exp))
@@ -501,6 +627,404 @@ public class GameManager : MonoBehaviour
     {
         SceneManager.LoadScene("SampleScene");
     }
+
+    // ── 함정 효과 ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 함정이 작동했을 때 실제로 일어나는 일. 종류는 시트의 id2 로 갈린다.
+    ///
+    /// 갈래를 <b>번호가 아니라 이름으로</b> 나누는 이유는, 코드에 10005 라고
+    /// 적혀 있으면 그게 무엇인지 알 수 없기 때문이다(문서 5절).
+    /// note 열의 글자로 나누지 않는 이유도 같다 — 그건 사람이 읽는 메모라
+    /// 말투를 다듬는 순간 게임이 조용히 바뀐다.
+    ///
+    /// 아직 만들지 않은 함정은 아무 일도 하지 않는다. 문구는 이미 떴으므로
+    /// 플레이어에게는 "밟았지만 별일 없었다" 로 보인다.
+    /// </summary>
+    public void ApplyTrapEffect(string trapId, TrapAnimation animation = TrapAnimation.None)
+    {
+        // 몸짓을 먼저 보여 준다.
+        //
+        // 워프만 예외다. 워프의 '빙글' 은 위로 올라가는 동안 도는 것이라
+        // 그 연출 안에 이미 들어 있고, 여기서 또 돌리면 두 번 돈다.
+        if (trapId != TrapIds.Warp) StartCoroutine(PlayTrapAnimation(animation));
+
+        switch (trapId)
+        {
+            case TrapIds.Hole:
+                StartCoroutine(FallThroughHole());
+                break;
+
+            case TrapIds.Warp:
+                StartCoroutine(WarpPlayer());
+                break;
+
+            case TrapIds.Blow:
+                StartCoroutine(BlowPlayer(-LookDirection, TrapEffects.BlowDistance));
+                break;
+
+            case TrapIds.Dart:
+                LoseStrength(TrapEffects.DartStrengthLoss);
+                break;
+
+            // 아래 셋은 거는 상태만 다르다. 지속 턴도 문구도 시트가 정한다.
+            case TrapIds.Gas:
+                ApplyCondition(ConditionCatalog.SleepId);
+                break;
+
+            case TrapIds.Spin:
+                ApplyCondition(ConditionCatalog.DisarrayId);
+                break;
+
+            case TrapIds.Restraint:
+                ApplyCondition(ConditionCatalog.RestraintId);
+                break;
+
+            case TrapIds.Sticky:
+                MakeRandomBagItemSticky();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 구멍. 방어력을 무시하고 아프게 한 뒤 다음 층으로 떨어뜨린다.
+    ///
+    /// 피해가 먼저다. 이 피해로 죽을 수 있고, 그때는 내려가지 않고 거기서 끝난다.
+    /// 순서를 뒤집으면 죽은 채로 다음 층이 시작된다.
+    /// </summary>
+    private IEnumerator FallThroughHole()
+    {
+        Player player = PlayerComponent;
+
+        // 떨어지는 것도 강제 이동이다. 바닥을 뚫고 내려가는 중에 적이 때리면
+        // 이미 그 층에 없는 사람을 때리는 셈이 된다.
+        ForcedMoveRunning = true;
+        InputFocus.Give(InputOwner.Prompt);
+
+        // 먼저 사라지고 나서 아프다. 순서를 뒤집으면 멀쩡히 서 있는 캐릭터가
+        // 느닷없이 5 만큼 깎여서, 무엇 때문에 아픈지가 화면에 없다.
+        if (player != null) yield return player.FallThroughFloor();
+
+        Stats.TakeDamage(TrapEffects.HoleDamage);
+        ShowMessage(GameMessage.PlayerDamaged, amount: TrapEffects.HoleDamage);
+
+        if (Stats.IsDead)
+        {
+            // 층이 넘어가지 않으므로 여기서 되돌리지 않으면 보이지 않는 채로 죽는다.
+            player?.RestoreAfterFall();
+            InputFocus.ReturnToPlayer();
+            ForcedMoveRunning = false;
+            GameOver();
+            yield break;
+        }
+
+        // 문구를 읽을 틈을 준다. 달리는 중이면 건너뛴다.
+        if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
+
+        player?.RestoreAfterFall();
+        InputFocus.ReturnToPlayer();
+        ForcedMoveRunning = false;
+
+        SceneManager.LoadScene("SampleScene");
+    }
+
+    /// <summary>
+    /// 워프. 다른 방의 빈 칸으로 옮긴다.
+    ///
+    /// 함정 전용이 아니다 — 지팡이·능력에서도 그대로 부르면 된다.
+    /// 옮기는 동안 ForcedMoveRunning 을 세워, 적이 지난 자리를 기준으로
+    /// 움직이거나 때리지 않게 한다.
+    ///
+    /// 갈 곳을 먼저 정하고 나서 연출을 시작한다. 연출을 띄워 놓고 자리를 못
+    /// 찾으면 올라갔다가 제자리로 내려오는 꼴이 되기 때문이다.
+    /// </summary>
+    public IEnumerator WarpPlayer()
+    {
+        Player player = PlayerComponent;
+        if (player == null || MapMake == null || FloorTilemap == null) yield break;
+
+        // 자리를 고르는 일은 전부 칸 좌표로 한다. 월드 좌표는 칸 중심이 x+0.5 라서
+        // 그걸로 계산하면 반 칸씩 어긋난다(TrapEffects 주석). 월드로 되돌리는 것은
+        // 맨 마지막 한 번뿐이다.
+        bool found = TrapEffects.TryPickWarpDestination(
+            MapMake.RoomCells,
+            EnemyCells(),
+            FloorTilemap.WorldToCell(player.transform.position),
+            // using System 이 있어 Random 만으로는 어느 쪽인지 가려지지 않는다.
+            (min, max) => UnityEngine.Random.Range(min, max),
+            out Vector3Int destinationCell);
+
+        // 갈 곳이 없으면(방이 하나뿐이고 적으로 가득 찬 경우) 아무 일도 없다.
+        if (!found) yield break;
+
+        ForcedMoveRunning = true;
+        InputFocus.Give(InputOwner.Prompt);
+
+        yield return player.WarpTo(GridUtil.CellCenter(FloorTilemap, destinationCell));
+
+        InputFocus.ReturnToPlayer();
+        ForcedMoveRunning = false;
+    }
+
+    /// <summary>
+    /// 날리기. direction 방향으로 cells 칸 밀어낸다.
+    ///
+    /// 함정 전용이 아니다 — 밀어내는 지팡이나 능력도 이것을 부르면 된다.
+    /// 그래서 방향과 거리를 밖에서 받는다.
+    ///
+    /// 날아가는 판정은 던진 아이템과 같은 RangedShot 을 쓴다. 같은 규칙으로
+    /// 날아가야 "던진 것은 저기까지 가는데 나는 왜 여기서 멈추지" 가 안 생긴다.
+    /// </summary>
+    public IEnumerator BlowPlayer(Vector2 direction, int cells)
+    {
+        Player player = PlayerComponent;
+        if (player == null || FloorTilemap == null) yield break;
+        if (direction == Vector2.zero || cells <= 0) yield break;
+
+        var step = new Vector2Int(
+            Mathf.RoundToInt(direction.x), Mathf.RoundToInt(direction.y));
+
+        Vector3Int origin = FloorTilemap.WorldToCell(player.transform.position);
+
+        // 살아 있는 적을 판정 대상으로 넘긴다. 부딪히면 거기서 멈춘다.
+        var living = new List<Enemy>();
+        var targets = new List<Vector3Int>();
+        foreach (Enemy enemy in enemies)
+        {
+            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
+            living.Add(enemy);
+            targets.Add(FloorTilemap.WorldToCell(enemy.transform.position));
+        }
+
+        RangedShot.Result shot = RangedShot.Trace(
+            new TilemapWalkableGrid(FloorTilemap), origin, step, cells, targets);
+
+        // 적에게 부딪혔으면 그 앞 칸이 내가 설 자리다.
+        // 같은 칸에 겹쳐 서면 둘 다 빠져나오지 못한다.
+        Vector3Int landingCell = shot.HitTarget
+            ? new Vector3Int(shot.ImpactCell.x - step.x, shot.ImpactCell.y - step.y, 0)
+            : shot.ImpactCell;
+
+        Vector3 landing = GridUtil.CellCenter(FloorTilemap, landingCell);
+
+        ForcedMoveRunning = true;
+        InputFocus.Give(InputOwner.Prompt);
+
+        yield return player.BlowTo(landing, direction, shot.StoppedByWall || shot.HitTarget);
+
+        // 부딪힌 적이 있으면 둘 다 아프다. 서로 부딪힌 것이므로 한쪽만 아플 이유가 없다.
+        if (shot.HitTarget)
+            yield return CollideWith(living[shot.TargetIndex]);
+
+        // 떨어진 자리의 땅이 무엇이냐에 따라 갈린다.
+        TrapEffects.BlowOutcome outcome = TrapEffects.ResolveBlow(
+            TileRules.KindAt(FloorTilemap, landing), shot.StoppedByWall);
+
+        yield return ApplyBlowOutcome(outcome);
+
+        InputFocus.ReturnToPlayer();
+        ForcedMoveRunning = false;
+    }
+
+    /// <summary>날려지다 적과 부딪혔다. 둘 다 방어력 무시 피해를 입는다.</summary>
+    private IEnumerator CollideWith(Enemy target)
+    {
+        if (target == null) yield break;
+
+        ShowTwoLines(
+            MessageCatalog.Format(GameMessage.BlownIntoEnemy, target.DisplayName),
+            MessageCatalog.Format(GameMessage.PlayerDamaged, amount: TrapEffects.BlowWallDamage));
+
+        // 맞은 쪽이 먼저다. 플레이어가 여기서 죽으면 게임 오버로 넘어가는데,
+        // 그 뒤에 적을 때리면 이미 끝난 판에서 경험치가 들어온다.
+        target.TakeTrueDamage(TrapEffects.BlowWallDamage);
+        Stats.TakeDamage(TrapEffects.BlowWallDamage);
+
+        if (Stats.IsDead) GameOver();
+
+        if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
+    }
+
+    /// <summary>살아 있는 적들이 선 칸.</summary>
+    private List<Vector3Int> EnemyCells()
+    {
+        var cells = new List<Vector3Int>();
+        if (FloorTilemap == null) return cells;
+
+        foreach (Enemy enemy in enemies)
+        {
+            if (enemy != null && enemy.gameObject.activeInHierarchy)
+                cells.Add(FloorTilemap.WorldToCell(enemy.transform.position));
+        }
+        return cells;
+    }
+
+    /// <summary>날려진 끝에 일어나는 일. 판정은 TrapEffects 가 이미 정했다.</summary>
+    private IEnumerator ApplyBlowOutcome(TrapEffects.BlowOutcome outcome)
+    {
+        switch (outcome)
+        {
+            case TrapEffects.BlowOutcome.HitWall:
+                ShowTwoLines(
+                    MessageCatalog.Format(GameMessage.BlownIntoWall),
+                    MessageCatalog.Format(
+                        GameMessage.PlayerDamaged, amount: TrapEffects.BlowWallDamage));
+                Stats.TakeDamage(TrapEffects.BlowWallDamage);
+                if (Stats.IsDead) GameOver();
+                break;
+
+            case TrapEffects.BlowOutcome.Water:
+                ShowMessage(GameMessage.BlownIntoWater);
+                if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
+
+                // 물에 들어갈 수 없는 상태로 물 한가운데 놓이면 나올 길이 없다.
+                //
+                // 안쪽의 WarpPlayer 가 끝나면서 ForcedMoveRunning 을 내린다.
+                // 그 시점에는 옮기는 일이 이미 다 끝나 있어서, 그때 적 턴이
+                // 풀려도 적은 새 자리를 보고 움직인다.
+                yield return WarpPlayer();
+                break;
+
+            case TrapEffects.BlowOutcome.Lava:
+                int burn = TrapEffects.LavaDamage(Stats.Hp);
+                ShowTwoLines(
+                    MessageCatalog.Format(GameMessage.BlownIntoLava),
+                    MessageCatalog.Format(GameMessage.PlayerDamaged, amount: burn));
+                Stats.TakeDamage(burn);
+
+                if (Stats.IsDead) { GameOver(); break; }
+
+                if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
+                yield return WarpPlayer();
+                break;
+
+            case TrapEffects.BlowOutcome.Pit:
+                // 절벽은 구멍 함정과 똑같이 다룬다. 같은 일이 일어난 것이므로
+                // 처리도 한 곳에 두어야 한쪽만 고쳐지는 일이 없다.
+                yield return FallThroughHole();
+                break;
+        }
+    }
+
+    // ── 상태이상 ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 상태이상을 건다. <b>함정 · 아이템 · 능력이 모두 이 한 곳을 쓴다.</b>
+    ///
+    /// 지속 턴은 시트가 정한다(Conditions 시트의 turn 열). 거는 쪽마다 숫자를
+    /// 들고 있으면 같은 '수면' 인데 함정은 5턴, 두루마리는 8턴이 되어 버린다.
+    /// 길이를 바꾸고 싶으면 엑셀 한 칸만 고치면 된다.
+    ///
+    /// 표에 없는 id 를 주면 아무 일도 하지 않고 알린다 — 조용히 안 걸리면
+    /// "왜 함정이 아무것도 안 하지" 를 함정 코드에서 찾게 된다.
+    /// </summary>
+    public void ApplyCondition(string conditionId)
+    {
+        ConditionDefinition definition = ConditionCatalog.Find(conditionId);
+        if (definition == null)
+        {
+            Debug.LogWarning($"상태이상 '{conditionId}' 를 표에서 찾지 못했습니다.");
+            return;
+        }
+
+        // 일부러 거는 상태인데 표가 "효과 없음" 이라고 하면 걸리기만 하고 아무 일도
+        // 일어나지 않는다. 상태창에는 뜨는데 게임은 그대로라 알아채기가 어렵다 —
+        // 실제로 잠·혼란·봉인 셋이 그 상태로 한동안 돌아갔다.
+        //
+        // 만복도에서 저절로 나오는 것들(배고픔 등)은 이 길을 지나지 않으므로
+        // 여기서 걸러도 시끄러워지지 않는다.
+        if (definition.Effect == ConditionEffect.None)
+        {
+            Debug.LogWarning(
+                $"상태이상 '{conditionId}'({definition.Name}) 의 효과가 '없음' 입니다. " +
+                "엑셀 Conditions 시트의 effect 열을 확인하세요.");
+        }
+
+        bool wasAlready = Conditions.Has(conditionId);
+        Conditions.Apply(conditionId, definition.DurationTurns);
+
+        // 이미 걸려 있던 것에 또 걸리면 알리지 않는다. 같은 함정을 연달아 밟을 때
+        // "잠들었다!" 가 계속 뜨면 정작 그 사이의 다른 소식이 묻힌다.
+        if (!wasAlready)
+            ShowText(MessageCatalog.Format(GameMessage.ConditionApplied, definition.Name));
+    }
+
+    /// <summary>함정이 시키는 몸짓. 플레이어가 없으면 아무 일도 하지 않는다.</summary>
+    private IEnumerator PlayTrapAnimation(TrapAnimation animation)
+    {
+        if (animation == TrapAnimation.None) yield break;
+
+        Player player = PlayerComponent;
+        if (player != null) yield return player.PlayTrapAnimation(animation);
+    }
+
+    /// <summary>
+    /// 가방의 아이템 하나를 끈적끈적하게 만든다. 끈적끈적 함정이 쓴다.
+    ///
+    /// 이미 끈적한 것은 고르지 않는다. 그러지 않으면 가방에 끈적한 것이 하나만
+    /// 남았을 때 함정이 아무 일도 하지 않은 것처럼 보인다.
+    /// </summary>
+    public void MakeRandomBagItemSticky()
+    {
+        var candidates = new List<GameObject>();
+        for (int i = 0; i < Bag.Count; i++)
+        {
+            GameObject item = Bag[i];
+            if (item != null && !ItemInstance.IsSticky(item)) candidates.Add(item);
+        }
+
+        if (candidates.Count == 0) return;
+
+        GameObject chosen = candidates[UnityEngine.Random.Range(0, candidates.Count)];
+        ItemInstance.SetSticky(chosen, true);
+
+        ShowMessage(GameMessage.BecameSticky, ItemInstance.DisplayNameOf(chosen));
+    }
+
+    /// <summary>
+    /// 힘을 깎는다. 독침 함정 · 앞으로 만들 아이템이 함께 쓴다.
+    ///
+    /// 이미 0 이면 아무 말도 하지 않는다. "힘이 0 깎였다!" 는 거짓말이다.
+    /// </summary>
+    public void LoseStrength(int amount)
+    {
+        int lost = Stats.LoseStrength(amount);
+        if (lost > 0) ShowMessage(GameMessage.StrengthLost, amount: lost);
+    }
+
+    /// <summary>이 상태가 걸려 있는가. 능력·행동이 막혔는지 물을 때 쓴다.</summary>
+    public static bool HasCondition(string conditionId) => Conditions.Has(conditionId);
+
+    /// <summary>
+    /// 걸려 있는 상태들 중 이 효과를 가진 것이 있는가.
+    ///
+    /// id 가 아니라 <b>효과</b>로 묻는다. 잠이 얕은 것과 깊은 것 둘로 나뉘어
+    /// 있듯이 같은 효과를 내는 상태가 여럿일 수 있고, 부르는 쪽이 그 목록을
+    /// 외우고 있으면 표에 하나 더할 때마다 코드를 고쳐야 한다.
+    /// </summary>
+    public static bool HasEffect(ConditionEffect effect)
+    {
+        foreach (string id in Conditions.ActiveIds)
+        {
+            ConditionDefinition definition = ConditionCatalog.Find(id);
+            if (definition != null && definition.Effect == effect) return true;
+        }
+        return false;
+    }
+
+    /// <summary>한 턴이 지났다. 남은 턴을 줄이고 풀린 것을 알린다.</summary>
+    private void TickConditions()
+    {
+        foreach (string id in Conditions.Tick())
+        {
+            ConditionDefinition definition = ConditionCatalog.Find(id);
+            if (definition != null)
+                ShowText(MessageCatalog.Format(GameMessage.ConditionEnded, definition.Name));
+        }
+    }
+
+    /// <summary>함정 문구를 읽을 틈. 층이 넘어가기 전에 이만큼 기다린다.</summary>
+    private const float TrapMessagePause = 1f;
 
     /// <summary>계단 위에서 아래층으로 내려갈지 묻는다.</summary>
     public IEnumerator PromptDescend()
@@ -544,9 +1068,15 @@ public class GameManager : MonoBehaviour
         while (messageBox.ShowingImportant)
             yield return null;
 
+        // 워프·날리기가 끝나기를 기다린다. 옮겨진 뒤의 자리를 기준으로 움직여야
+        // 적이 빈 칸을 쫓거나 때리는 일이 없다.
+        while (ForcedMoveRunning)
+            yield return null;
+
         TurnCount++;
 
         ApplyHungerTick();
+        TickConditions();
 
         // 빨리감기 중에는 연출용 대기를 건너뛴다. 이 대기가 없으면 아래 과정이
         // 전부 같은 프레임 안에서 끝나므로, 달리기 한 번이 한 프레임에 처리된다.
@@ -555,6 +1085,9 @@ public class GameManager : MonoBehaviour
 
         // 적들이 서로 같은 칸으로 몰리지 않도록, 이번 턴의 예약 위치를 새로 받는다.
         enemyPositions.Clear();
+
+        foreach (Enemy enemy in enemies)
+            if (enemy != null) enemy.BeginTurn();
 
         // 이번 턴의 길찾기 지도를 한 번만 만든다. 적이 몇 마리든 탐색은 한 번이다.
         if (enemies.Count > 0 && Player != null && FloorTilemap != null)
@@ -587,6 +1120,12 @@ public class GameManager : MonoBehaviour
 
         // 2. 이동은 마릿수와 상관없이 같은 프레임에 끝낸다.
         //    같은 칸으로 겹쳐 들어가는 것은 enemyPositions 예약이 막아 준다.
+        //
+        //    가까운 적부터 움직인다. 줄지어 쫓아올 때 앞선 적이 먼저 비켜 주어야
+        //    뒤의 적이 그 칸을 이어받는다. 순서가 반대면 뒤의 적이 아직 차 있는
+        //    칸을 보고 물러서서, 도망치는 플레이어와의 간격이 계속 벌어진다.
+        movers.Sort((a, b) => a.StepsToPlayer.CompareTo(b.StepsToPlayer));
+
         foreach (Enemy enemy in movers)
             enemy.TakeStep();
 
@@ -633,9 +1172,18 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>턴이 지날 때마다 배가 고파지고, 굶으면 체력이 깎인다.</summary>
+    /// <summary>
+    /// 만복도가 줄어드는 간격. 장비가 늘려 준다.
+    ///
+    /// 간격이 길어질수록 배가 늦게 고파진다. 소모량을 줄이지 않고 간격을 늘리는
+    /// 이유는, 소모량은 이미 1 이라 더 줄일 수가 없기 때문이다.
+    /// </summary>
+    private int HungerInterval
+        => HungerTickInterval + (Gear != null ? Gear.AbilityValue(EquipAbility.SlowHunger) : 0);
+
     private void ApplyHungerTick()
     {
-        if (TurnCount % HungerTickInterval == 0 && !Stats.IsStarving)
+        if (TurnCount % HungerInterval == 0 && !Stats.IsStarving)
         {
             int before = Stats.Hunger;
             Stats.ConsumeHunger();
@@ -714,7 +1262,7 @@ public class GameManager : MonoBehaviour
         GameObject ground = player != null ? player.ItemUnderFoot : null;
 
         var menu = new BagMenuController(
-            menuPanel, messageBox, Bag, itemCatalog, Gear, ground, startOnGround);
+            menuPanel, messageBox, Bag, Gear, ground, startOnGround);
 
         StartCoroutine(RunBagMenu(menu, ground));
     }
@@ -813,11 +1361,20 @@ public class GameManager : MonoBehaviour
 
         if (groundItem == null || Bag.Count == 0) return;
 
+        // 차고 있는 끈적한 장비는 내놓을 수 없다. 교환도 가방을 떠나는 일이라
+        // 여기서 막지 않으면 아래 UnequipIfWearing 이 조용히 벗겨 버린다.
+        GameObject offered = Bag[index];
+        if (Gear.IsEquipped(offered) && ItemInstance.IsSticky(offered))
+        {
+            ShowMessage(GameMessage.StickyStuck, ItemInstance.DisplayNameOf(offered));
+            return;
+        }
+
         string takenName = TakeFromGround(groundItem);
 
         // 몸에 걸치고 있던 것을 내려놓게 되면 반드시 벗겨야 한다.
         GameObject given = Bag.Replace(index, groundItem);
-        string givenName = given.name.Replace("(Clone)", string.Empty);
+        string givenName = ItemInstance.DisplayNameOf(given);
         Gear.UnequipIfWearing(given);
 
         // 내려놓는 쪽은 씬으로 되돌려 그 자리에 놓는다.
@@ -843,7 +1400,8 @@ public class GameManager : MonoBehaviour
     {
         if (groundItem == null) { InputFocus.ReturnToPlayer(); yield break; }
 
-        string itemName = groundItem.name.Replace("(Clone)", string.Empty);
+        int itemId = ItemInstance.IdOf(groundItem);
+        string itemName = ItemInstance.DisplayNameOf(groundItem);
 
         if (Gear.SlotOf(groundItem) != EquipmentSlot.None)
         {
@@ -860,11 +1418,19 @@ public class GameManager : MonoBehaviour
             yield break;
         }
 
+        // 끈적한 것은 바닥에 있든 가방에 있든 쓸 수 없다.
+        if (ItemInstance.IsSticky(groundItem))
+        {
+            InputFocus.ReturnToPlayer();
+            ShowMessage(GameMessage.StickyUnusable, itemName);
+            yield break;
+        }
+
         Ground.Remove(groundItem.transform.position);
         Destroy(groundItem);
         InputFocus.ReturnToPlayer();
 
-        if (ItemEffects.TryUse(itemName, Stats, out GameMessage useMessage))
+        if (ItemEffects.TryUse(itemId, Stats, out GameMessage useMessage))
             EndPlayerTurn(useMessage, itemName);
         else
             EndPlayerTurn();
@@ -875,7 +1441,7 @@ public class GameManager : MonoBehaviour
     {
         if (groundItem == null) { InputFocus.ReturnToPlayer(); yield break; }
 
-        string itemName = groundItem.name.Replace("(Clone)", string.Empty);
+        string itemName = ItemInstance.DisplayNameOf(groundItem);
 
         // 날아가는 동안에는 이 칸에 없으므로 바닥 목록에서 먼저 뺀다.
         // ItemThrower 가 떨어진 자리에 다시 넣어 준다.
@@ -889,7 +1455,7 @@ public class GameManager : MonoBehaviour
         GameMessage? result = null;
 
         yield return thrower.Throw(
-            groundItem, itemName, LookDirection, Stats, message => result = message);
+            groundItem, LookDirection, Stats, message => result = message);
 
         InputFocus.ReturnToPlayer();
 
@@ -913,12 +1479,33 @@ public class GameManager : MonoBehaviour
     private IEnumerator PerformItemAction(BagMenuController.ItemAction action, int index)
     {
         GameObject item = Bag[index];
-        string itemName = item.name;
+        int itemId = ItemInstance.IdOf(item);
+        string itemName = ItemInstance.DisplayNameOf(item);
 
         // 장비는 가방에서 빠지지 않는다. 차고 있다는 표시만 바뀐다.
         if (action == BagMenuController.ItemAction.Use && Gear.SlotOf(item) != EquipmentSlot.None)
         {
             ToggleEquip(item, itemName);
+            yield break;
+        }
+
+        // ── 끈적끈적 ───────────────────────────────────────────────────────
+        //
+        // 소모품이면 쓸 수 없다. 버리거나 던지는 것은 되므로 여기서만 막는다.
+        if (action == BagMenuController.ItemAction.Use && ItemInstance.IsSticky(item))
+        {
+            InputFocus.ReturnToPlayer();
+            ShowMessage(GameMessage.StickyUnusable, itemName);
+            yield break;
+        }
+
+        // 차고 있는 끈적한 장비는 가방을 떠날 수 없다. 벗을 수 없다는 것이
+        // 곧 "버리지도 던지지도 교환하지도 못한다" 는 뜻이다 — 여기서 막지 않으면
+        // 아래 UnequipIfWearing 이 조용히 벗겨서 규칙에 구멍이 난다.
+        if (Gear.IsEquipped(item) && ItemInstance.IsSticky(item))
+        {
+            InputFocus.ReturnToPlayer();
+            ShowMessage(GameMessage.StickyStuck, itemName);
             yield break;
         }
 
@@ -936,7 +1523,7 @@ public class GameManager : MonoBehaviour
                 Destroy(item);
                 InputFocus.ReturnToPlayer();
 
-                if (ItemEffects.TryUse(itemName, Stats, out GameMessage useMessage))
+                if (ItemEffects.TryUse(itemId, Stats, out GameMessage useMessage))
                     EndPlayerTurn(useMessage, itemName);
                 else
                     EndPlayerTurn();
@@ -962,7 +1549,7 @@ public class GameManager : MonoBehaviour
                 GameMessage? result = null;
 
                 yield return thrower.Throw(
-                    item, itemName, LookDirection, Stats,
+                    item, LookDirection, Stats,
                     message => result = message);
 
                 InputFocus.ReturnToPlayer();
@@ -986,6 +1573,14 @@ public class GameManager : MonoBehaviour
 
         if (Gear.IsEquipped(item))
         {
+            // 차는 것은 됐지만 벗는 것은 안 된다. 끈적한 장비를 집어 든 순간이
+            // 아니라 <b>차는 순간</b>이 돌이킬 수 없는 지점이다.
+            if (ItemInstance.IsSticky(item))
+            {
+                ShowMessage(GameMessage.StickyStuck, itemName);
+                return;
+            }
+
             Gear.Unequip(Gear.SlotOf(item));
             EndPlayerTurn(GameMessage.Unequipped, itemName);
             return;

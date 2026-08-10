@@ -13,6 +13,18 @@ public static class GridUtil
     /// <summary>타일 한 칸의 중심으로 보내기 위한 오프셋.</summary>
     public const float CellCenterOffset = 0.5f;
 
+    /// <summary>
+    /// 여덟 방향. 적의 이웃 살피기와 혼란의 방향 뒤틀기가 함께 쓴다.
+    ///
+    /// 예전에는 Enemy 안에만 있었다. 혼란(방향 교란)이 같은 목록을 필요로 하면서,
+    /// 한쪽만 고치면 "적이 갈 수 있는 방향" 과 "혼란이 보내는 방향" 이 어긋나게 됐다.
+    /// </summary>
+    public static readonly Vector2[] EightDirections =
+    {
+        Vector2.up, Vector2.down, Vector2.left, Vector2.right,
+        new Vector2(1, 1), new Vector2(-1, 1), new Vector2(1, -1), new Vector2(-1, -1),
+    };
+
     /// <summary>타일 좌표를 그 칸의 중심 월드 좌표로 바꾼다.</summary>
     public static Vector3 CellCenter(Tilemap tilemap, Vector3Int cellPosition)
     {

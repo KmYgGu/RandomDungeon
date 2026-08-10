@@ -113,6 +113,22 @@ public class PlayerStats
         Strength = Mathf.Min(Strength + amount, MaxStrength);
     }
 
+    /// <summary>
+    /// 힘이 깎인다(독침 같은 것). 실제로 깎인 양을 돌려준다.
+    ///
+    /// 0 밑으로는 내려가지 않는다. 힘은 공격력 배수와 던지는 거리에 쓰이는데,
+    /// 음수가 되면 그 계산들이 뜻을 잃는다. 최대치는 건드리지 않으므로
+    /// 기력회복약으로 되돌릴 수 있다.
+    /// </summary>
+    public int LoseStrength(int amount)
+    {
+        if (amount <= 0) return 0;
+
+        int before = Strength;
+        Strength = Mathf.Max(Strength - amount, 0);
+        return before - Strength;
+    }
+
     public void RaiseMaxStrength(int amount)
     {
         MaxStrength += amount;

@@ -15,6 +15,12 @@ public class Player : MovingObject
     /// <summary>공격이 맞을 확률(10%는 빗나감).</summary>
     private const float HitChance = 0.9f;
 
+    /// <summary>
+    /// 적의 치명타 배율. 확률은 적마다 다르지만(Monster 시트의 critical) 배율은 같다.
+    /// 플레이어가 낼 때와도 같은 값이다 — 한쪽만 다르면 그 차이를 설명할 길이 없다.
+    /// </summary>
+    private const double IncomingCriticalMultiplier = 1.8;
+
     /// <summary>달리는 중에 이 거리 안으로 적이 들어오면 멈춘다(대각선 포함 한 칸).</summary>
     private const float EnemyAlertRadius = 1.5f;
 
@@ -185,6 +191,21 @@ public class Player : MovingObject
     /// </summary>
     private void HandleNormalInput()
     {
+        // 잠들어 있으면 아무것도 못 한다. 입력을 읽기 전에 턴부터 넘긴다.
+        //
+        // 입력을 무시하기만 하면 게임이 멈춘 것처럼 보인다. 턴은 흘러야
+        // 남은 잠이 줄어들고, 그래야 언젠가 깨어난다.
+        //
+        // 아무도 없는 곳에서 자면 화면에서도 아무 일이 일어나지 않아, 턴이 도는
+        // 것조차 보이지 않는다. 그래서 자고 있다는 것을 매 턴 알린다.
+        // 같은 말이 이미 떠 있으면 다시 띄우지 않으므로 이력이 더러워지지 않는다.
+        if (GameManager.HasEffect(ConditionEffect.SkipTurn))
+        {
+            GameManager.instance.ShowMessageUnlessRepeated(GameMessage.Sleeping);
+            WaitOneTurn();
+            return;
+        }
+
         // 개발용: 계단을 찾지 않고 바로 다음 층으로 내려간다.
         if (GameInput.SkipFloorPressed)
         {
@@ -197,7 +218,16 @@ public class Player : MovingObject
             Input.GetKey(InputKeys.DiagonalLock), out Vector2 direction);
 
         // 두 버튼을 함께 눌렀다면 대기다. 다른 어떤 판정보다 먼저 본다.
-        if (GameInput.WaitRequested)
+        //
+        // 누르고 있는 동안 계속 쉰다. 한 턴이 끝나면 적이 움직이고, 내 차례가
+        // 돌아왔을 때 여전히 눌려 있으면 또 한 턴을 넘긴다. 따로 시간을 재지
+        // 않아도 턴 자체가 속도를 정해 준다(적 턴의 연출 대기).
+        //
+        // 다만 적이 옆에 붙었거나 굶주릴 때는 이어 가지 않는다. 달리기가 같은
+        // 상황에서 한 걸음만 가는 것과 같은 이유이고, 판정도 같은 것을 쓴다 —
+        // 손쓸 수 없는 사이에 여러 턴이 지나가면 안 된다. 그때는 누를 때마다
+        // 한 턴씩만 쉰다(WaitRequested 는 새로 누른 순간에만 참이다).
+        if (GameInput.WaitRequested || (GameInput.WaitHeld && !MustStepOneAtATime()))
         {
             GameInput.ConsumeAction();
             GameInput.ConsumeAssist();
@@ -250,11 +280,30 @@ public class Player : MovingObject
 
         if (!hasDirection) return;
 
+        // 혼란 상태면 가려던 쪽이 아니라 엉뚱한 쪽으로 간다.
+        direction = ScrambleIfConfused(direction);
+
         GameManager.LookDirection = direction;
         FaceDirection(direction);
 
         steppingWithoutTaking = false;
         TryStep(direction);
+    }
+
+    /// <summary>
+    /// 혼란에 걸려 있으면 여덟 방향 중 아무 쪽으로나 바꾼다.
+    ///
+    /// 방향을 <b>바꾸기만</b> 하고 걸음 자체는 그대로 둔다. 아예 못 움직이게 하면
+    /// 잠과 다를 바가 없고, 혼란은 "가긴 가는데 엉뚱한 데로 간다" 가 재미다.
+    ///
+    /// 바뀐 방향이 원래와 같을 수도 있다. 여덟 중 하나는 제대로 가는 셈인데,
+    /// 그래야 혼란에 걸린 채로도 운이 좋으면 빠져나갈 수 있다.
+    /// </summary>
+    private Vector2 ScrambleIfConfused(Vector2 direction)
+    {
+        if (!GameManager.HasEffect(ConditionEffect.ScrambleDirection)) return direction;
+
+        return GridUtil.EightDirections[Random.Range(0, GridUtil.EightDirections.Length)];
     }
 
     /// <summary>
@@ -766,8 +815,17 @@ public class Player : MovingObject
     private void Attack()
     {
         Vector3 origin = transform.position;
-        Vector2 direction = GameManager.LookDirection;
+
+        // 혼란은 이동만이 아니라 공격도 흔든다. 때리려던 쪽이 아니라 엉뚱한 데를
+        // 친다. 이동만 흔들면 "옆에 붙은 적을 정확히 때릴 수는 있는" 상태가 되어
+        // 혼란이 별것 아닌 것이 된다.
+        Vector2 direction = ScrambleIfConfused(GameManager.LookDirection);
         if (direction == Vector2.zero) return;
+
+        // 엉뚱한 쪽을 치더라도 그쪽을 보고 친다. 보는 방향과 때리는 방향이
+        // 다르면 무엇이 일어났는지 화면에서 읽을 수 없다.
+        GameManager.LookDirection = direction;
+        FaceDirection(direction);
 
         // 연출이 끝날 때까지 조작을 잠근다.
         // 잠그지 않으면 공격 도중에 이동까지 해서 한 턴에 두 행동을 하게 된다.
@@ -814,6 +872,258 @@ public class Player : MovingObject
         ArrowTransform.SetActive(false);
 
         GameManager.instance.EndPlayerTurn();
+    }
+
+    // ── 워프 ───────────────────────────────────────────────────────────────
+
+    /// <summary>스프라이트가 화면 밖으로 올라가는 높이(칸). 화면 세로가 10칸이다.</summary>
+    private const float WarpRiseHeight = 8f;
+
+    /// <summary>올라가는 데, 그리고 내려오는 데 걸리는 시간.</summary>
+    private const float WarpRiseSeconds = 0.35f;
+    private const float WarpFallSeconds = 0.25f;
+
+    /// <summary>올라가는 동안 도는 바퀴 수.</summary>
+    private const int WarpSpinTurns = 1;
+
+    /// <summary>
+    /// 워프 함정에 걸렸을 때. 한 바퀴 돌며 위로 사라졌다가 다른 방에서 내려온다.
+    ///
+    /// 본체(transform)를 옮기는 순간 카메라도 따라가므로, 스프라이트를 화면
+    /// 밖으로 올려 둔 채 옮기면 '사라졌다가 저쪽에서 내려오는' 것으로 보인다.
+    /// 움직이는 것은 자식(childTransform)이고 본체는 순간이동한다 —
+    /// 본체를 천천히 옮기면 벽을 통과하는 모습이 그대로 보인다.
+    /// </summary>
+    public IEnumerator WarpTo(Vector3 destination)
+    {
+        mode = Mode.Acting;
+
+        // 달리던 중에 밟았을 수 있다. 그대로 두면 내려오자마자 마저 달린다.
+        StopRun(RunStopReason.SteppedOnObject);
+
+        yield return MoveSpriteVertically(
+            WarpRiseHeight, WarpRiseSeconds, spin: true);
+
+        // 달리기가 세어 두는 칸은 맞춰 줄 필요가 없다.
+        // AutoRunner.Begin 이 다음 달리기를 시작할 때 그 자리를 다시 받는다.
+        transform.position = destination;
+
+        yield return MoveSpriteVertically(
+            0f, WarpFallSeconds, spin: false);
+
+        mode = Mode.Normal;
+    }
+
+    /// <summary>
+    /// 스프라이트를 제자리 기준 targetHeight 만큼 위로(또는 원위치로) 옮긴다.
+    ///
+    /// spin 이 켜져 있으면 올라가는 동안 여덟 방향을 차례로 돌아 한 바퀴 돈다.
+    /// 방향 스프라이트를 그대로 쓰므로 새 그림이 필요 없다 — 이것이
+    /// TrapAnimation.Spin 이 뜻하는 몸짓이다.
+    /// </summary>
+    private IEnumerator MoveSpriteVertically(float targetHeight, float seconds, bool spin)
+    {
+        Vector3 start = childTransform.localPosition;
+        Vector3 end = spriteHomePosition + Vector3.up * targetHeight;
+
+        // 빨리감기 중이면 연출을 건너뛴다. 달리기로 함정을 밟았을 때
+        // 화면이 멈춰 서지 않게 하는 규칙을 여기서도 지킨다.
+        if (GameManager.FastForward || seconds <= 0f)
+        {
+            childTransform.localPosition = end;
+            yield break;
+        }
+
+        int spriteCount = directionsprites != null ? directionsprites.Length : 0;
+
+        for (float t = 0f; t < seconds; t += Time.deltaTime)
+        {
+            float progress = Mathf.Clamp01(t / seconds);
+            childTransform.localPosition = Vector3.Lerp(start, end, progress);
+
+            if (spin && spriteCount > 0)
+            {
+                int step = Mathf.FloorToInt(progress * spriteCount * WarpSpinTurns);
+                spriteRenderer.sprite = directionsprites[step % spriteCount];
+            }
+
+            yield return null;
+        }
+
+        childTransform.localPosition = end;
+
+        // 돌기를 끝냈으면 원래 바라보던 쪽으로 되돌린다.
+        if (spin) FaceDirection(GameManager.LookDirection);
+    }
+
+    // ── 날려지기 ───────────────────────────────────────────────────────────
+
+    /// <summary>한 칸을 날아가는 데 걸리는 시간. 던진 아이템보다 조금 느리다.</summary>
+    private const float BlowSecondsPerCell = 0.03f;
+
+    /// <summary>벽에 부딪혀 튀는 데 걸리는 시간과 밀려 들어가 보이는 깊이(칸).</summary>
+    private const float BlowBounceSeconds = 0.1f;
+    private const float BlowBounceDepth = 0.3f;
+
+    /// <summary>
+    /// 날리기 함정에 밀려 destination 까지 날아간다.
+    ///
+    /// 워프와 달리 본체가 실제로 <b>지나간다.</b> 날려지는 길은 이미 지나갈 수
+    /// 있는 칸들이라(RangedShot 이 벽에서 멈춘다) 벽을 뚫고 가는 모습이 되지 않는다.
+    ///
+    /// 벽에 처박혔으면 던진 아이템이 벽에 부딪힐 때와 같은 몸짓을 보여 준다.
+    /// 같은 일이 일어난 것이므로 같아 보여야 한다.
+    /// </summary>
+    public IEnumerator BlowTo(Vector3 destination, Vector2 direction, bool hitWall)
+    {
+        mode = Mode.Acting;
+        StopRun(RunStopReason.SteppedOnObject);
+
+        Vector3 start = transform.position;
+        int cells = Mathf.RoundToInt(Vector3.Distance(start, destination));
+
+        if (!GameManager.FastForward && cells > 0)
+        {
+            float duration = cells * BlowSecondsPerCell;
+            for (float t = 0f; t < duration; t += Time.deltaTime)
+            {
+                transform.position = Vector3.Lerp(start, destination, t / duration);
+                yield return null;
+            }
+        }
+
+        transform.position = destination;
+
+        if (hitWall) yield return BounceOffWall(direction.normalized);
+
+        mode = Mode.Normal;
+    }
+
+    /// <summary>벽 쪽으로 한 번 밀려 들어갔다가 제자리로 돌아온다.</summary>
+    private IEnumerator BounceOffWall(Vector2 direction)
+    {
+        if (GameManager.FastForward) yield break;
+
+        Vector3 home = spriteHomePosition;
+        Vector3 into = home + (Vector3)direction * BlowBounceDepth;
+
+        // 들어갔다 나오는 두 토막. 같은 시간을 나눠 쓴다.
+        for (float t = 0f; t < BlowBounceSeconds; t += Time.deltaTime)
+        {
+            float half = BlowBounceSeconds / 2f;
+            childTransform.localPosition = t < half
+                ? Vector3.Lerp(home, into, t / half)
+                : Vector3.Lerp(into, home, (t - half) / half);
+            yield return null;
+        }
+
+        childTransform.localPosition = home;
+    }
+
+    // ── 함정이 시키는 몸짓 ─────────────────────────────────────────────────
+
+    /// <summary>한 바퀴 도는 데 걸리는 시간.</summary>
+    private const float SpinSeconds = 0.45f;
+
+    /// <summary>강제로 돌려질 때는 더 빠르게, 더 여러 바퀴.</summary>
+    private const float SpinFastSeconds = 0.5f;
+    private const int SpinFastTurns = 2;
+
+    /// <summary>
+    /// 함정이 시키는 몸짓을 보여 준다.
+    ///
+    /// 도는 것은 8방향 스프라이트를 차례로 넘기는 것이라 새 그림이 필요 없다.
+    /// 피격·수면은 전용 그림이 있어야 해서 <b>아직 아무것도 하지 않는다</b> —
+    /// 그림이 생기면 여기에 채우면 되고, 그때까지 함정은 문구와 효과로만 동작한다.
+    /// </summary>
+    public IEnumerator PlayTrapAnimation(TrapAnimation animation)
+    {
+        switch (animation)
+        {
+            case TrapAnimation.Spin:
+                yield return SpinInPlace(SpinSeconds, turns: 1);
+                break;
+
+            case TrapAnimation.SpinFast:
+                yield return SpinInPlace(SpinFastSeconds, SpinFastTurns);
+                break;
+
+            // TrapAnimation.Hit · Sleep 은 그림이 아직 없다.
+            // TrapAnimation.None 은 원래 아무것도 하지 않는다.
+        }
+    }
+
+    /// <summary>제자리에서 여덟 방향을 차례로 넘겨 turns 바퀴 돈다.</summary>
+    private IEnumerator SpinInPlace(float seconds, int turns)
+    {
+        int spriteCount = directionsprites != null ? directionsprites.Length : 0;
+        if (spriteCount == 0 || seconds <= 0f) yield break;
+
+        // 달리다 밟았으면 연출을 건너뛴다. 달리기가 멈추지 않게 하는 규칙이다.
+        if (GameManager.FastForward) yield break;
+
+        mode = Mode.Acting;
+
+        for (float t = 0f; t < seconds; t += Time.deltaTime)
+        {
+            int step = Mathf.FloorToInt(t / seconds * spriteCount * turns);
+            spriteRenderer.sprite = directionsprites[step % spriteCount];
+            yield return null;
+        }
+
+        // 돌기를 끝냈으면 원래 바라보던 쪽으로 되돌린다.
+        FaceDirection(GameManager.LookDirection);
+        mode = Mode.Normal;
+    }
+
+    // ── 구멍에 빠지기 ──────────────────────────────────────────────────────
+
+    /// <summary>사라지는 데 걸리는 시간.</summary>
+    private const float FallSeconds = 0.4f;
+
+    /// <summary>
+    /// 구멍에 빠졌을 때. 제자리에서 작아지며 사라진다.
+    ///
+    /// 아래로 내리지 않고 작아지게 하는 이유는, 내리면 지금 층의 바닥 타일
+    /// <b>위를</b> 미끄러져 가는 모습이 되기 때문이다. 멀어지듯 작아져야
+    /// 발밑으로 떨어지는 것으로 읽힌다.
+    ///
+    /// 사라진 뒤에 피해를 알린다. 느닷없이 아프면 무엇 때문인지 알 수 없다.
+    /// 나중에 공중에서 허덕이는 그림이 생기면 이 사이에 끼우면 된다.
+    /// </summary>
+    public IEnumerator FallThroughFloor()
+    {
+        mode = Mode.Acting;
+
+        // 달려서 밟았을 수 있다. 그대로 두면 떨어지는 중에도 걸음이 이어진다.
+        StopRun(RunStopReason.SteppedOnObject);
+
+        if (!GameManager.FastForward && FallSeconds > 0f)
+        {
+            for (float t = 0f; t < FallSeconds; t += Time.deltaTime)
+            {
+                float progress = Mathf.Clamp01(t / FallSeconds);
+                childTransform.localScale = spriteHomeScale * (1f - progress);
+                yield return null;
+            }
+        }
+
+        childTransform.gameObject.SetActive(false);
+    }
+
+    /// <summary>
+    /// 떨어지는 연출을 되돌린다.
+    ///
+    /// 층을 넘어가면 플레이어가 새로 만들어져서 저절로 제 모습이 되지만,
+    /// <b>떨어진 피해로 죽으면 층이 넘어가지 않는다.</b> 그때 되돌리지 않으면
+    /// 게임 오버 화면에 보이지 않는 캐릭터가 남는다.
+    /// </summary>
+    public void RestoreAfterFall()
+    {
+        childTransform.localScale = spriteHomeScale;
+        childTransform.localPosition = spriteHomePosition;
+        childTransform.gameObject.SetActive(true);
+        mode = Mode.Normal;
     }
 
     private Enemy FindEnemyAt(Vector3 position)
@@ -978,7 +1288,7 @@ public class Player : MovingObject
     }
 
     /// <summary>적에게 맞았을 때.</summary>
-    public void Damaged(int enemyAttack, Vector2 attackerPosition)
+    public void Damaged(int enemyAttack, Vector2 attackerPosition, int criticalPercent = 0)
     {
         if (Random.value >= HitChance)
         {
@@ -996,8 +1306,22 @@ public class Player : MovingObject
         int damage = GameManager.Stats.CalculateIncomingDamage(
             enemyAttack, randomFactor, GameManager.Gear.DefenseBonus);
 
+        // 치명타를 내는 적은 정해져 있다. 확률은 그 적의 것(Monster 시트의 critical)이고,
+        // 0 이면 아예 나지 않는다. 모든 적이 낸다면 맞는 쪽에서는 피해 폭이 넓은
+        // 것으로만 보여서, "저 녀석은 조심해야 한다" 가 성립하지 않는다.
+        //
+        // 치명타를 무효로 만드는 장비가 있으면 평범한 공격이 된다.
+        bool critical = criticalPercent > 0 && Random.Range(0, 100) < criticalPercent;
+        if (critical && GameManager.Gear.Has(EquipAbility.NegateCritical))
+            critical = false;
+
+        if (critical)
+            damage = (int)System.Math.Round(damage * IncomingCriticalMultiplier);
+
         GameManager.Stats.TakeDamage(damage);
-        GameManager.instance.ShowMessage(GameMessage.PlayerDamaged, amount: damage);
+        GameManager.instance.ShowMessage(
+            critical ? GameMessage.PlayerCriticallyDamaged : GameMessage.PlayerDamaged,
+            amount: damage);
         GameManager.instance.GameOver();
     }
 }

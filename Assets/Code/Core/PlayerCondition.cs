@@ -16,6 +16,15 @@ public static class ConditionCatalog
     public const string HungryId = "hungry";
     public const string StarvingId = "starving";
 
+    /// <summary>얕은 잠. 가스 함정이 건다.</summary>
+    public const string SleepId = "sleep";
+
+    /// <summary>혼란. 회전 함정이 건다.</summary>
+    public const string DisarrayId = "disarray";
+
+    /// <summary>봉인. 봉인 함정이 건다.</summary>
+    public const string RestraintId = "restraint";
+
     private static List<ConditionDefinition> all;
 
     /// <summary>
@@ -29,29 +38,18 @@ public static class ConditionCatalog
         {
             if (all != null) return all;
 
-            var data = Resources.Load<ExcelData>(ConditionSheet.ResourcePath);
-            if (data == null)
-            {
-                // 엑셀을 한 번도 저장하지 않았거나 임포터가 아직 돌지 않은 상태.
-                Debug.LogWarning(
-                    $"상태이상 표를 찾지 못했습니다: Resources/{ConditionSheet.ResourcePath}. " +
-                    "ExcelData.xlsx 를 한 번 저장하면 만들어집니다.");
-                all = new List<ConditionDefinition>();
-                return all;
-            }
-
             var problems = new List<string>();
-            all = Sort(ConditionSheet.FromEntities(data.Conditions, problems));
-
-            // 표를 고치는 사람이 무엇이 잘못됐는지 바로 알 수 있게 알린다.
-            foreach (string problem in problems)
-                Debug.LogWarning($"상태이상 표: {problem}");
+            all = Sort(ConditionSheet.FromEntities(ExcelSheets.Data?.Conditions, problems));
+            ExcelSheets.Report("상태이상", problems);
 
             return all;
         }
     }
 
-    /// <summary>표를 고친 뒤 다시 읽게 한다. 에디터에서 손볼 때 쓴다.</summary>
+    /// <summary>
+    /// 표를 고친 뒤 다시 읽게 한다. 에디터에서 손볼 때 쓴다.
+    /// 표 전체를 다시 읽으려면 ExcelSheets.Reload() 를 부른다.
+    /// </summary>
     public static void Reload() => all = null;
 
     public static ConditionDefinition Find(string id)
@@ -96,19 +94,30 @@ public static class ConditionReport
     /// 굶주림은 따로 걸어 주는 곳이 없어도 만복도만 보면 알 수 있으므로 여기서 뽑는다.
     /// 나머지는 그것을 거는 시스템(독 함정·두루마리 같은 것)이 생기면 더해진다.
     /// </summary>
-    public static List<ConditionDefinition> Active(PlayerStats stats)
+    public static List<ConditionDefinition> Active(PlayerStats stats, ConditionTracker tracker = null)
     {
         var active = new List<ConditionDefinition>();
         if (stats == null) return active;
 
         foreach (ConditionDefinition definition in ConditionCatalog.All)
         {
-            if (IsActive(definition, stats)) active.Add(definition);
+            if (IsActive(definition, stats, tracker)) active.Add(definition);
         }
         return active;
     }
 
-    private static bool IsActive(ConditionDefinition definition, PlayerStats stats)
+    /// <summary>
+    /// 이 상태가 지금 걸려 있는가.
+    ///
+    /// 두 갈래에서 온다 —
+    ///   만복도에서 <b>저절로 따라 나오는 것</b>(배고픔·굶주림)
+    ///   누군가 <b>걸어 준 것</b>(함정·아이템·능력) → ConditionTracker
+    ///
+    /// 굶주림을 tracker 에 넣지 않는 이유는 두 곳에 적히면 어긋나기 때문이다.
+    /// 밥을 먹었는데 '배고픔' 이 남아 있는 식이 된다.
+    /// </summary>
+    private static bool IsActive(
+        ConditionDefinition definition, PlayerStats stats, ConditionTracker tracker)
     {
         switch (definition.Id)
         {
@@ -122,25 +131,14 @@ public static class ConditionReport
                     && stats.Hunger <= stats.MaxHunger * HungerWarning.RumblePercent / 100;
 
             default:
-                // 아직 이 상태를 거는 것이 게임 안에 없다.
-                return false;
+                return tracker != null && tracker.Has(definition.Id);
         }
     }
 
     /// <summary>
-    /// 스크롤 위치를 목록 안으로 되돌린다.
-    ///
-    /// 위로 더 올릴 것이 없으면 0, 아래로 더 내릴 것이 없으면 화면이 꽉 차는 자리에 멈춘다.
-    /// 다 들어가는 짧은 목록은 아예 움직이지 않는다.
-    /// </summary>
-    public static int ClampOffset(int offset, int count, int capacity)
-    {
-        if (capacity <= 0) return 0;
-        return Mathf.Clamp(offset, 0, Mathf.Max(0, count - capacity));
-    }
-
-    /// <summary>
     /// 판에 채울 글자. capacity 줄까지만, offset 번째부터 보여 준다.
+    ///
+    /// 넘겨 보는 규칙 자체는 로그 화면과 같은 것을 쓴다(PageScroll).
     ///
     /// 번호는 화면에 보이는 순서가 아니라 목록에서의 실제 번호다.
     /// 스크롤해서 넷째 줄부터 보고 있으면 "4." 로 시작한다 —
@@ -151,7 +149,7 @@ public static class ConditionReport
     {
         if (active == null || active.Count == 0) return HealthyText;
 
-        int start = ClampOffset(offset, active.Count, capacity);
+        int start = PageScroll.ClampOffset(offset, active.Count, capacity);
         int end = Mathf.Min(start + Mathf.Max(capacity, 1), active.Count);
 
         var sb = new StringBuilder();

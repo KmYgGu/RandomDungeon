@@ -45,10 +45,20 @@ public static class ItemEffects
         }
     }
 
-    private static readonly Dictionary<string, Entry> table =
-        new Dictionary<string, Entry>(StringComparer.Ordinal)
+    /// <summary>
+    /// 아이템 번호 → 효과. item 시트의 id 열과 짝이다.
+    ///
+    /// 예전에는 이름("사과")이 키였다. 그러면 표에서 이름을 다듬는 순간
+    /// 효과가 조용히 사라진다 — 실제로 시트의 "힘의구술" 과 여기 있던
+    /// "힘의구슬" 이 한 글자 어긋나 있었다. 번호는 사람이 읽는 글이 아니라
+    /// 바뀔 일이 없다.
+    ///
+    /// 옆의 주석은 사람이 읽으라고 붙인 것이다. 코드는 번호만 본다.
+    /// </summary>
+    private static readonly Dictionary<int, Entry> table =
+        new Dictionary<int, Entry>
         {
-            ["사과"] = new Entry(
+            [20001] = new Entry(   // 사과
                 stats =>
                 {
                     // 배가 이미 부르면 대신 위장이 넓어진다.
@@ -63,7 +73,7 @@ public static class ItemEffects
                 // 만복도는 적에게 의미가 없다 → 그냥 맞은 만큼 아프다.
                 ThrownEffect.None, 0),
 
-            ["회복씨앗"] = new Entry(
+            [30001] = new Entry(   // 회복씨앗
                 stats =>
                 {
                     stats.Feed(5);
@@ -79,7 +89,7 @@ public static class ItemEffects
                 // 적에게 던지면 적을 치료해 준다. 던질 아이템을 잘 고르라는 뜻이다.
                 ThrownEffect.HealHp, 10),
 
-            ["기력회복약"] = new Entry(
+            [10001] = new Entry(   // 기력회복약
                 stats =>
                 {
                     stats.Feed(5);
@@ -89,7 +99,7 @@ public static class ItemEffects
                 // 기력을 되돌리는 약 → 적에게는 힘이 붙는 것으로 나타난다.
                 ThrownEffect.RaiseAttack, 1),
 
-            ["힘의구슬"] = new Entry(
+            [40001] = new Entry(   // 힘의구슬
                 stats =>
                 {
                     stats.RaiseMaxStrength(1);
@@ -101,11 +111,11 @@ public static class ItemEffects
     /// <summary>
     /// 아이템을 사용한다. 표에 없는 아이템이면 아무 일도 일어나지 않고 false.
     /// </summary>
-    public static bool TryUse(string itemName, PlayerStats stats, out GameMessage message)
+    public static bool TryUse(int itemId, PlayerStats stats, out GameMessage message)
     {
         message = default;
-        if (itemName == null || stats == null) return false;
-        if (!table.TryGetValue(itemName, out Entry entry)) return false;
+        if (stats == null) return false;
+        if (!table.TryGetValue(itemId, out Entry entry)) return false;
 
         message = entry.OnUse(stats);
         return true;
@@ -114,18 +124,14 @@ public static class ItemEffects
     /// <summary>
     /// 적에게 맞혔을 때의 효과. 표에 없는 아이템은 전투와 무관한 것으로 본다.
     /// </summary>
-    public static ThrownEffect GetThrownEffect(string itemName, out int amount)
+    public static ThrownEffect GetThrownEffect(int itemId, out int amount)
     {
         amount = 0;
-        if (itemName == null) return ThrownEffect.None;
-        if (!table.TryGetValue(itemName, out Entry entry)) return ThrownEffect.None;
+        if (!table.TryGetValue(itemId, out Entry entry)) return ThrownEffect.None;
 
         amount = entry.ThrownAmount;
         return entry.Thrown;
     }
 
-    public static bool IsUsable(string itemName)
-    {
-        return itemName != null && table.ContainsKey(itemName);
-    }
+    public static bool IsUsable(int itemId) => table.ContainsKey(itemId);
 }

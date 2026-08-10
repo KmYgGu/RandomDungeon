@@ -34,7 +34,6 @@ public class DungeonPopulator
     private readonly GroundObjectRegistry ground;
 
     private readonly GameObject[] itemPrefabs;
-    private readonly float[] itemWeights;
     private readonly GameObject[] trapPrefabs;
     private readonly GameObject monsterPrefab;
     private readonly GameObject stairsPrefab;
@@ -48,7 +47,6 @@ public class DungeonPopulator
         DungeonTilePainter painter,
         GroundObjectRegistry ground,
         GameObject[] itemPrefabs,
-        float[] itemWeights,
         GameObject[] trapPrefabs,
         GameObject monsterPrefab,
         GameObject stairsPrefab,
@@ -57,7 +55,6 @@ public class DungeonPopulator
         this.painter = painter;
         this.ground = ground;
         this.itemPrefabs = itemPrefabs;
-        this.itemWeights = itemWeights;
         this.trapPrefabs = trapPrefabs;
         this.monsterPrefab = monsterPrefab;
         this.stairsPrefab = stairsPrefab;
@@ -113,7 +110,10 @@ public class DungeonPopulator
             if (!TryFindSpot(room, IsSuitable, out Vector3Int spot)) continue;
 
             occupiedByItems.Add(spot);
-            SpawnOnGround(PickWeightedItem(), spot);
+            GameObject prefab = PickWeightedItem();
+            if (prefab == null) continue;
+
+            SpawnOnGround(prefab, spot);
         }
     }
 
@@ -128,10 +128,39 @@ public class DungeonPopulator
             GameObject monster = UnityEngine.Object.Instantiate(
                 monsterPrefab, painter.CellCenter(spot), Quaternion.identity);
 
-            // 층이 깊어질수록 강해진다.
-            int power = UnityEngine.Random.Range(1 + stage, 3 + stage);
-            monster.GetComponent<Enemy>().SetStats(5, power, power - stage);
+            SetMonsterStats(monster.GetComponent<Enemy>(), stage);
         }
+    }
+
+    /// <summary>
+    /// 적의 수치를 정한다. <b>시트에 적힌 값을 그대로 쓴다.</b>
+    ///
+    /// 예전에는 SetStats(5, power, power - stage) 로 세 숫자가 전부 여기 박혀
+    /// 있었다. Monster 시트에 hp/atk/def 를 적어 두어도 쓰이지 않았고,
+    /// 적을 한 종류 더 만들려면 이 줄을 고쳐야 했다.
+    ///
+    /// ── 층 보정을 두지 않는 이유 ──────────────────────────────────
+    /// 난이도는 같은 적을 층마다 부풀려서가 아니라 <b>어떤 적이 나오는가</b>로
+    /// 조절한다. 보정을 함께 두면 한 마리가 얼마나 센지가 시트만 봐서는
+    /// 알 수 없어지고, 표의 숫자를 고쳐도 실제 세기는 층마다 달라진다.
+    /// 깊은 층을 어렵게 하려면 센 적을 표에 더한다.
+    /// </summary>
+    private static void SetMonsterStats(Enemy enemy, int stage)
+    {
+        if (enemy == null) return;
+
+        MonsterDefinition definition =
+            enemy.description != null ? enemy.description.Definition : null;
+
+        if (definition == null)
+        {
+            // 정의가 아직 연결되지 않은 프리팹. 옛 방식 그대로 둔다.
+            int power = UnityEngine.Random.Range(1 + stage, 3 + stage);
+            enemy.SetStats(5, power, power - stage);
+            return;
+        }
+
+        enemy.SetStats(definition.Hp, definition.Attack, definition.Defense);
     }
 
     /// <summary>플레이어가 아직 없으면(첫 층이면) 한 명 만들어 놓는다.</summary>
@@ -225,20 +254,42 @@ public class DungeonPopulator
         UnityEngine.Object.Instantiate(prefab, painter.CellCenter(cell), Quaternion.identity);
     }
 
-    /// <summary>가중치에 따라 아이템 종류를 고른다.</summary>
+    /// <summary>
+    /// 가중치에 따라 아이템 종류를 고른다. 나올 것이 없으면 null.
+    ///
+    /// 가중치는 <b>아이템 정의(엑셀 item 시트의 droprate)</b>에서 온다.
+    /// 예전에는 인스펙터의 배열 둘을 번호로 짝지었는데, 프리팹만 늘리고
+    /// 가중치를 안 늘리면 새 아이템이 영영 안 나왔다. 실제로 장비 3종을
+    /// 더했을 때 그렇게 됐고, 에러는 나지 않았다.
+    /// </summary>
     private GameObject PickWeightedItem()
     {
-        float total = 0f;
-        foreach (float weight in itemWeights) total += weight;
+        if (itemPrefabs == null || itemPrefabs.Length == 0) return null;
 
-        float roll = UnityEngine.Random.Range(0f, total);
+        var weights = new List<float>(itemPrefabs.Length);
+        foreach (GameObject prefab in itemPrefabs)
+            weights.Add(DropRateOf(prefab));
 
-        for (int i = 0; i < itemWeights.Length && i < itemPrefabs.Length; i++)
+        float total = WeightedPick.Total(weights);
+        if (total <= 0f)
         {
-            if (roll < itemWeights[i]) return itemPrefabs[i];
-            roll -= itemWeights[i];
+            // 하나도 안 나오는 층이 되어 버린다. 대개 시트에 droprate 를
+            // 안 적었거나 프리팹에 정의를 안 이어 둔 것이다.
+            Debug.LogWarning("바닥에 놓을 아이템의 가중치가 모두 0 입니다. item 시트의 droprate 를 확인하세요.");
+            return null;
         }
 
-        return itemPrefabs[0];
+        int picked = WeightedPick.Choose(weights, UnityEngine.Random.Range(0f, total));
+        return picked >= 0 ? itemPrefabs[picked] : null;
+    }
+
+    /// <summary>이 프리팹이 바닥에 나올 가중치. 정의를 못 찾으면 0.</summary>
+    private static float DropRateOf(GameObject prefab)
+    {
+        ItemDescription description = ItemInstance.DescriptionOf(prefab);
+        if (description == null) return 0f;
+
+        ItemDefinition definition = description.Definition;
+        return definition != null ? definition.DropRate : 0f;
     }
 }

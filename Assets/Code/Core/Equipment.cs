@@ -11,16 +11,12 @@
 /// </summary>
 public class Equipment
 {
-    private readonly ItemCatalog catalog;
-
+    // 아이템의 성능은 오브젝트가 직접 들고 다니는 정의(ItemInstance.description)
+    // 에서 읽는다. 예전에는 이름으로 찾아 주는 색인(ItemCatalog)을 받아 두었는데,
+    // 오브젝트가 자기 정의를 가리키게 되면서 그 다리가 필요 없어졌다.
     private GameObject weapon;
     private GameObject armor;
     private GameObject accessory;
-
-    public Equipment(ItemCatalog catalog)
-    {
-        this.catalog = catalog;
-    }
 
     public GameObject Weapon => weapon;
     public GameObject Armor => armor;
@@ -38,6 +34,31 @@ public class Equipment
     /// </summary>
     public int AccessoryPower => PowerOf(accessory);
 
+    /// <summary>
+    /// 지금 차고 있는 것들이 가진 이 능력의 합.
+    ///
+    /// 세 자리를 모두 더한다. 같은 능력을 무기와 장신구가 함께 가지면 둘 다 먹는다 —
+    /// 갖춰 입는 보람이 있어야 하고, "둘 중 하나만 먹는다" 는 규칙은 어느 쪽이
+    /// 먹히는지 화면에서 알 수 없어 설명하기도 어렵다.
+    /// </summary>
+    public int AbilityValue(EquipAbility ability)
+        => ValueOf(weapon, ability) + ValueOf(armor, ability) + ValueOf(accessory, ability);
+
+    /// <summary>그 능력을 가진 장비를 하나라도 차고 있는가. 숫자를 쓰지 않는 능력에 쓴다.</summary>
+    public bool Has(EquipAbility ability)
+        => HasOn(weapon, ability) || HasOn(armor, ability) || HasOn(accessory, ability);
+
+    private static bool HasOn(GameObject item, EquipAbility ability)
+    {
+        if (item == null || ability == EquipAbility.None) return false;
+
+        ItemDescription description = ItemInstance.DescriptionOf(item);
+        return description != null && description.ability == ability;
+    }
+
+    private static int ValueOf(GameObject item, EquipAbility ability)
+        => HasOn(item, ability) ? ItemInstance.DescriptionOf(item).abilityValue : 0;
+
     public GameObject Get(EquipmentSlot slot)
     {
         switch (slot)
@@ -54,7 +75,7 @@ public class Equipment
     {
         if (item == null) return EquipmentSlot.None;
 
-        ItemDescription description = catalog.Find(item.name);
+        ItemDescription description = ItemInstance.DescriptionOf(item);
         return description != null ? description.equipSlot : EquipmentSlot.None;
     }
 
@@ -114,7 +135,7 @@ public class Equipment
     {
         if (item == null) return 0;
 
-        ItemDescription description = catalog.Find(item.name);
+        ItemDescription description = ItemInstance.DescriptionOf(item);
         int basePower = description != null ? description.basePower : 0;
 
         return basePower + ItemInstance.EnhancementOf(item);

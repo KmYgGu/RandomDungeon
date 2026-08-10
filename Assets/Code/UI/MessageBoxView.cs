@@ -44,6 +44,15 @@ public class MessageBoxView
     private readonly TextMeshProUGUI label;
     private readonly PanelView selectList;
 
+    /// <summary>
+    /// 창에 뜬 글을 쌓아 두는 곳. 상태창의 '로그' 가 이것을 읽는다.
+    ///
+    /// 기록을 이 클래스가 맡는 이유는, "플레이어에게 실제로 보였다" 를 아는 곳이
+    /// 여기뿐이기 때문이다. 부르는 쪽마다 따로 기록하게 하면 새 호출부가 생길
+    /// 때마다 빠뜨리고, 뜨지 못하고 무시된 메시지까지 이력에 섞인다.
+    /// </summary>
+    private readonly MessageLog log;
+
     private Coroutine autoHideRoutine;
 
     /// <summary>"A 를 누르면 넘어간다" 를 알리는 표시. 처음 필요할 때 만든다.</summary>
@@ -57,13 +66,15 @@ public class MessageBoxView
         GameObject panel,
         Image frame,
         TextMeshProUGUI label,
-        PanelView selectList)
+        PanelView selectList,
+        MessageLog log)
     {
         this.runner = runner;
         this.panel = panel;
         this.frame = frame;
         this.label = label;
         this.selectList = selectList;
+        this.log = log;
 
         if (frame != null) frame.enabled = false;
 
@@ -101,11 +112,22 @@ public class MessageBoxView
 
         Open();
         if (label != null) label.text = message;
+        LastShown = message;
+        log?.Add(message);
         RestartAutoHide();
     }
 
     /// <summary>지금 중요한 알림을 띄워 두고 확인을 기다리는 중인가.</summary>
     public bool ShowingImportant { get; private set; }
+
+    /// <summary>
+    /// 마지막으로 창에 띄운 글. 아직 아무것도 안 띄웠으면 null.
+    ///
+    /// 같은 글을 연달아 띄우지 않으려는 쪽이 본다. 잠든 동안처럼 매 턴 같은 말을
+    /// 하는 경우, 그대로 두면 이력이 같은 줄로 가득 차고 이미 떠 있는 글을
+    /// 다시 그리기만 한다.
+    /// </summary>
+    public string LastShown { get; private set; }
 
     /// <summary>
     /// 글을 읽는 데 걸린다고 보는 시간. 글자 수에 비례한다.
@@ -138,6 +160,8 @@ public class MessageBoxView
 
         Open();
         if (label != null) label.text = message;
+        LastShown = message;
+        log?.Add(message);
 
         // 읽을 시간. 이 동안의 A 는 넘기는 데 쓰이지 않는다.
         // 표시도 아직 띄우지 않는다 — 눌러도 안 넘어가는데 누르라고 하면 거짓말이 된다.
@@ -170,15 +194,26 @@ public class MessageBoxView
         Hide();
     }
 
-    /// <summary>자동으로 닫히지 않는 메시지를 띄운다(선택을 기다릴 때).</summary>
+    /// <summary>
+    /// 자동으로 닫히지 않는 메시지를 띄운다(선택을 기다릴 때).
+    ///
+    /// 여기 오는 것은 "지하로 내려가겠습니까?" 같은 물음이라 이력에 남기지 않는다.
+    /// 물음은 일어난 일이 아니고, 답을 고르는 동안 계속 다시 그려져서
+    /// 그대로 두면 같은 줄이 이력을 가득 채운다.
+    /// </summary>
     public void ShowPersistent(string message)
     {
         Open();
         if (label != null) label.text = message;
+        LastShown = message;
     }
 
     public void Hide()
     {
+        // 창을 닫았으니 화면에는 아무 글도 없다. 다음에 같은 말을 해야 하면
+        // 그때는 새로 띄워야 한다.
+        LastShown = null;
+
         StopAutoHide();
         SetContinuePromptVisible(false);
         ShowingImportant = false;

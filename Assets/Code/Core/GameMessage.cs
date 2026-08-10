@@ -10,6 +10,8 @@ public enum GameMessage
 {
     /// <summary>플레이어가 피해를 입음. amount = 피해량</summary>
     PlayerDamaged,
+    /// <summary>플레이어가 치명타를 맞음. amount = 피해량</summary>
+    PlayerCriticallyDamaged,
     /// <summary>공격이 빗나감.</summary>
     AttackMissed,
     /// <summary>회심의 일격. amount = 피해량</summary>
@@ -83,6 +85,31 @@ public enum GameMessage
     /// <summary>던진 아이템이 벽에 부딪힘.</summary>
     ItemHitWall,
 
+    /// <summary>날리기 함정에 밀려 벽에 처박혔다.</summary>
+    BlownIntoWall,
+    /// <summary>날려져 물에 빠졌다.</summary>
+    BlownIntoWater,
+    /// <summary>날려져 용암에 빠졌다.</summary>
+    BlownIntoLava,
+    /// <summary>날려지다 적과 부딪혔다. name = 적 이름</summary>
+    BlownIntoEnemy,
+
+    /// <summary>상태이상에 걸렸다. name = 상태 이름</summary>
+    ConditionApplied,
+    /// <summary>상태이상이 풀렸다. name = 상태 이름</summary>
+    ConditionEnded,
+    /// <summary>힘이 깎였다. amount = 깎인 양</summary>
+    StrengthLost,
+    /// <summary>잠들어 있어 이번 턴에 아무것도 하지 못했다.</summary>
+    Sleeping,
+
+    /// <summary>끈적끈적해서 쓸 수 없다. name = 아이템명</summary>
+    StickyUnusable,
+    /// <summary>차고 있는 것이 끈적끈적해서 손에서 떨어지지 않는다. name = 아이템명</summary>
+    StickyStuck,
+    /// <summary>아이템이 끈적끈적해졌다. name = 아이템명</summary>
+    BecameSticky,
+
     /// <summary>던진 물건이 적에게 맞았다. name = 적 이름, amount = 피해량</summary>
     ThrownItemHitEnemy,
     /// <summary>회복 아이템을 맞고 적이 회복했다. name = 적 이름</summary>
@@ -110,6 +137,8 @@ public static class MessageCatalog
         {
             case GameMessage.PlayerDamaged:
                 return $"플레이어에게 {amount}데미지!";
+            case GameMessage.PlayerCriticallyDamaged:
+                return $"회심의 일격! 플레이어에게 {amount}데미지!";
             case GameMessage.AttackMissed:
                 return "그러나 공격은 빗나갔다";
             case GameMessage.CriticalHit:
@@ -182,6 +211,31 @@ public static class MessageCatalog
                 return $"{name}은 아이템속에 파묻혀 사라져 버렸다";
             case GameMessage.ItemHitWall:
                 return $"{name}벽에 부딪혀 땅에 떨어졌다.";
+
+            case GameMessage.BlownIntoWall:
+                return "벽에 세게 부딪혔다!";
+            case GameMessage.BlownIntoWater:
+                return "물에 빠져 떠내려갔다!";
+            case GameMessage.BlownIntoLava:
+                return "용암에 빠졌다!";
+            case GameMessage.BlownIntoEnemy:
+                return $"{name}와(과) 세게 부딪혔다!";
+
+            case GameMessage.ConditionApplied:
+                return $"{name} 상태가 되었다!";
+            case GameMessage.ConditionEnded:
+                return $"{name} 상태가 풀렸다.";
+            case GameMessage.StrengthLost:
+                return $"힘이 {amount} 깎였다!";
+            case GameMessage.Sleeping:
+                return "쿨쿨 자고 있다.";
+
+            case GameMessage.StickyUnusable:
+                return $"{name}은(는) 끈적끈적해서 쓸 수 없다!";
+            case GameMessage.StickyStuck:
+                return $"{name}이(가) 손에 붙어 떨어지지 않는다!";
+            case GameMessage.BecameSticky:
+                return $"{name}에 끈적한 액체가 묻어버렸다!";
 
             case GameMessage.ThrownItemHitEnemy:
                 return $"{name}에게 명중! {amount}데미지!";

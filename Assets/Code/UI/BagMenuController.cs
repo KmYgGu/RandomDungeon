@@ -57,7 +57,6 @@ public class BagMenuController
     private readonly PanelView panel;
     private readonly MessageBoxView messageBox;
     private readonly Inventory inventory;
-    private readonly ItemCatalog catalog;
     private readonly Equipment equipment;
 
     /// <summary>지금 밟고 서 있는 물건. 없으면 null.</summary>
@@ -73,7 +72,6 @@ public class BagMenuController
         PanelView panel,
         MessageBoxView messageBox,
         Inventory inventory,
-        ItemCatalog catalog,
         Equipment equipment,
         GameObject groundItem,
         bool startOnGround)
@@ -81,7 +79,6 @@ public class BagMenuController
         this.panel = panel;
         this.messageBox = messageBox;
         this.inventory = inventory;
-        this.catalog = catalog;
         this.equipment = equipment;
         this.groundItem = groundItem;
 
@@ -109,9 +106,10 @@ public class BagMenuController
         {
             if (groundItem == null) return string.Empty;
 
+            // 돈에는 표식을 붙일 수 없다(종류가 하나뿐이고 액수가 곧 이름이다).
             return GroundIsGold
                 ? GoldPile.DisplayName(GoldPile.AmountOf(groundItem))
-                : groundItem.name.Replace("(Clone)", string.Empty);
+                : ItemInstance.MarkPrefixOf(groundItem) + ItemInstance.DisplayNameOf(groundItem);
         }
     }
 
@@ -214,7 +212,25 @@ public class BagMenuController
             // (가방을 연 그 키가 곧바로 가방을 닫아 버리는 것을 막는다)
             yield return null;
 
-            if (GameInput.AssistPressed)
+            // 두 버튼을 함께 눌렀으면 정리다. 제자리 대기와 같은 손짓을 쓴다.
+            //
+            // 반드시 A·B 각각의 판정보다 먼저 봐야 한다. 뒤에 두면 A 가 먼저
+            // 잡혀서 아이템을 고르는 것으로 새어 나간다. 그래서 둘 다 소비한다.
+            if (GameInput.WaitRequested)
+            {
+                GameInput.ConsumeAction();
+                GameInput.ConsumeAssist();
+                SortBag();
+                continue;
+            }
+
+            // B 는 <b>뗄 때</b> 닫는다. 누르는 순간 닫으면 "B 를 누른 채 A" 라는
+            // 조합 자체가 성립하지 않아 위의 정리 입력을 칠 수가 없다.
+            // 플레이어 조작에서 A+B 대기가 되는 이유도 같다 — 거기서도 B 는
+            // 누를 때 아무 일도 하지 않고 뗄 때 조준이 된다.
+            //
+            // 정리로 쓰인 B 는 위에서 소비했으므로 손을 뗄 때 닫히지 않는다.
+            if (GameInput.AssistTapped)
             {
                 selectedItem = Cancelled;
                 yield break;
@@ -246,16 +262,21 @@ public class BagMenuController
 
         // 창이 하나뿐이라 메뉴가 뜨면 목록은 자리를 내준다. 그러면 어떤 아이템을
         // 고른 상태였는지가 화면에서 사라지므로, 맨 윗줄에 그 이름을 남겨 둔다.
-        string title = inventory[selectedItem].name;
-
+        //
+        // 오브젝트 이름이 아니라 시트에 적힌 이름을 쓴다. 표식도 함께 얹어서,
+        // 마킹한 뒤 무엇이 붙었는지 그 자리에서 보이게 한다.
         while (true)
         {
+            string title = TitleOf(inventory[selectedItem]);
             panel.ShowList(BuildMenuText(title, labels, selectedAction));
 
             yield return null;
 
             if (GameInput.AssistPressed)
             {
+                // 소비하지 않으면 손을 뗄 때 Tapped 가 목록 화면으로 새어 나가
+                // 가방까지 함께 닫힌다(Browse 는 뗄 때 닫는다).
+                GameInput.ConsumeAssist();
                 onResult(null);
                 yield break;
             }
@@ -266,11 +287,19 @@ public class BagMenuController
 
             if (!GameInput.ActionPressed) continue;
 
-            // '확인한다' 는 labels 의 두 번째. 창을 닫으면 목록이 아니라
-            // 이 메뉴로 되돌아온다. 설명을 본 뒤 곧바로 쓰거나 던지는 일이 많다.
-            if (selectedAction == 1)
+            // '확인한다' 는 창을 닫으면 목록이 아니라 이 메뉴로 되돌아온다.
+            // 설명을 본 뒤 곧바로 쓰거나 던지는 일이 많다.
+            if (selectedAction == InspectIndex)
             {
-                yield return ShowDetail(catalog.Find(inventory[selectedItem].name));
+                yield return ShowDetail(ItemInstance.DescriptionOf(inventory[selectedItem]));
+                continue;
+            }
+
+            // '마킹한다' 도 여기서 끝난다. 턴을 쓰지 않는 표시일 뿐이라
+            // GameManager 까지 갈 일이 없다.
+            if (selectedAction == MarkIndex)
+            {
+                yield return ChooseMark(inventory[selectedItem]);
                 continue;
             }
 
@@ -312,7 +341,7 @@ public class BagMenuController
         {
             labels = new[]
             {
-                UseLabelOf(catalog.Find(GroundItemName)), "확인한다", "줍는다", "던진다", "교환한다",
+                UseLabelOf(ItemInstance.DescriptionOf(groundItem)), "확인한다", "줍는다", "던진다", "교환한다",
             };
             choices = new[]
             {
@@ -331,6 +360,9 @@ public class BagMenuController
 
             if (GameInput.AssistPressed)
             {
+                // 소비하지 않으면 손을 뗄 때 Tapped 가 목록 화면으로 새어 나가
+                // 가방까지 함께 닫힌다(Browse 는 뗄 때 닫는다).
+                GameInput.ConsumeAssist();
                 onResult(null);
                 yield break;
             }
@@ -349,7 +381,7 @@ public class BagMenuController
 
             if (choices[selected] == GroundChoice.Inspect)
             {
-                yield return ShowDetail(catalog.Find(GroundItemName));
+                yield return ShowDetail(ItemInstance.DescriptionOf(groundItem));
                 continue;
             }
 
@@ -370,6 +402,9 @@ public class BagMenuController
             yield return null;
         }
         while (!GameInput.AssistPressed);
+
+        // 설명을 닫은 B 가 뗄 때 목록까지 닫지 않도록 소비한다.
+        GameInput.ConsumeAssist();
     }
 
     /// <summary>
@@ -385,11 +420,11 @@ public class BagMenuController
     private string[] BuildBagLabels(int index)
     {
         GameObject item = inventory[index];
-        string useLabel = UseLabelOf(catalog.Find(item.name), item);
+        string useLabel = UseLabelOf(ItemInstance.DescriptionOf(item), item);
 
         return CanSwapWithGround
-            ? new[] { useLabel, "확인한다", "둔다", "던진다", "교환한다" }
-            : new[] { useLabel, "확인한다", "둔다", "던진다" };
+            ? new[] { useLabel, "확인한다", "둔다", "던진다", "마킹한다", "교환한다" }
+            : new[] { useLabel, "확인한다", "둔다", "던진다", "마킹한다" };
     }
 
     /// <summary>
@@ -405,18 +440,139 @@ public class BagMenuController
         if (description.IsEquipment)
         {
             bool worn = item != null && equipment != null && equipment.IsEquipped(item);
+
+            // 끈적한 장비는 차는 것은 되지만 벗을 수 없다. 차고 있는 동안에는
+            // 무엇을 골라도 안 된다는 것이 메뉴에서 미리 보여야 헛손질을 안 한다.
+            if (worn && ItemInstance.IsSticky(item)) return "떨어지지 않는다";
+
             return worn ? "벗는다" : "장착한다";
         }
 
-        return description.itemType == ItemDescription.ItemType.Food ? "먹는다" : "사용한다";
+        // 끈적한 소모품은 쓸 수 없다. 버리거나 던지는 것은 되므로 그 항목은 남는다.
+        if (ItemInstance.IsSticky(item)) return "쓸 수 없다";
+
+        return description.itemType == ItemKind.Food ? "먹는다" : "사용한다";
     }
 
-    /// <summary>BuildBagLabels 와 같은 순서여야 한다. (확인한다는 따로 처리한다)</summary>
+    /// <summary>
+    /// BuildBagLabels 와 같은 순서여야 한다.
+    ///
+    /// '확인한다' 와 '마킹한다' 자리는 쓰이지 않는다. 그 둘은 창을 닫지도 턴을
+    /// 쓰지도 않고 이 컨트롤러 안에서 끝나므로 GameManager 까지 갈 일이 없다.
+    /// 자리만 맞춰 두면 되지만, 무엇이든 넣으면 나중에 그 값이 진짜로 쓰이는 줄
+    /// 알기 쉬워서 Use 로 채우고 여기 적어 둔다.
+    /// </summary>
     private ItemAction[] BuildBagActions()
     {
         return CanSwapWithGround
-            ? new[] { ItemAction.Use, ItemAction.Use, ItemAction.Drop, ItemAction.Throw, ItemAction.Swap }
-            : new[] { ItemAction.Use, ItemAction.Use, ItemAction.Drop, ItemAction.Throw };
+            ? new[] { ItemAction.Use, ItemAction.Use, ItemAction.Drop, ItemAction.Throw,
+                      ItemAction.Use, ItemAction.Swap }
+            : new[] { ItemAction.Use, ItemAction.Use, ItemAction.Drop, ItemAction.Throw,
+                      ItemAction.Use };
+    }
+
+    /// <summary>창을 닫지 않고 그 자리에서 처리하는 항목의 자리(BuildBagLabels 기준).</summary>
+    private const int InspectIndex = 1;
+    private const int MarkIndex = 4;
+
+    /// <summary>
+    /// 가방을 이름순으로 정리한다. 턴을 쓰지 않는다.
+    ///
+    /// 커서는 보고 있던 <b>물건</b>을 계속 따라간다. 번호만 그대로 두면 정리 후
+    /// 다른 물건이 선택된 상태가 되어, 이어서 누르던 손이 엉뚱한 것을 쓴다.
+    ///
+    /// 문구는 띄우지 않는다. 정리된 것은 목록이 다시 그려지는 것으로 이미 보이고,
+    /// 메시지창까지 쓰면 정작 읽어야 할 소식이 밀린다. 알림은 앞으로 효과음이 맡는다.
+    /// </summary>
+    private void SortBag()
+    {
+        if (inventory.IsEmpty) return;
+
+        GameObject watching = inventory[selectedItem];
+        selectedItem = inventory.SortByName(watching);
+    }
+
+    // ── 마킹 ───────────────────────────────────────────────────────────────
+
+    /// <summary>메뉴 맨 윗줄에 얹을 이름. 표식이 있으면 함께 보여 준다.</summary>
+    private static string TitleOf(GameObject item)
+        => ItemInstance.MarkPrefixOf(item) + ItemInstance.DisplayNameOf(item);
+
+    /// <summary>
+    /// 표식을 고른다. 색을 먼저, 그다음 모양.
+    ///
+    /// 색을 먼저 묻는 이유는 모양 화면에서 <b>고른 색으로 칠해 보여 주기</b>
+    /// 위해서다. 반대 순서면 모양만 흰색으로 고르고 나서 색을 상상해야 한다.
+    ///
+    /// 어느 단계에서든 B 로 물러설 수 있고, 그때는 표식이 바뀌지 않는다.
+    /// 표식은 턴을 쓰지 않으므로 무르는 데 대가가 없어야 한다.
+    /// </summary>
+    private IEnumerator ChooseMark(GameObject item)
+    {
+        var colorLabels = new string[ItemMark.Colors.Length];
+        for (int i = 0; i < ItemMark.Colors.Length; i++)
+        {
+            MarkColor c = ItemMark.Colors[i];
+            colorLabels[i] = $"<color={ItemMark.HexOf(c)}>■ {ItemMark.NameOf(c)}</color>";
+        }
+
+        int chosenColor = -1;
+        yield return PickFromList(TitleOf(item), colorLabels, index => chosenColor = index);
+        if (chosenColor < 0) yield break;
+
+        MarkColor color = ItemMark.Colors[chosenColor];
+
+        // 모양은 고른 색으로 칠해 보여 준다. 붙은 뒤의 모습이 그대로 보인다.
+        var shapeLabels = new string[ItemMark.Shapes.Length];
+        for (int i = 0; i < ItemMark.Shapes.Length; i++)
+        {
+            MarkShape shape = ItemMark.Shapes[i];
+            shapeLabels[i] = shape == MarkShape.None
+                ? ItemMark.NameOf(shape)
+                : $"<color={ItemMark.HexOf(color)}>{ItemMark.NameOf(shape)}</color>";
+        }
+
+        int chosenShape = -1;
+        yield return PickFromList(TitleOf(item), shapeLabels, index => chosenShape = index);
+        if (chosenShape < 0) yield break;
+
+        // 이 물건 하나가 아니라 그 종류 전부에 붙는다. 다음에 만날 같은 것도
+        // 곧바로 알아볼 수 있어야 적어 둔 뜻이 있다(MarkBook 참고).
+        GameManager.Marks.Set(ItemInstance.IdOf(item), ItemMark.Shapes[chosenShape], color);
+    }
+
+    /// <summary>
+    /// 목록에서 하나 고른다. B 로 물러서면 -1.
+    ///
+    /// 가방 메뉴 · 발밑 메뉴가 각자 쓰고 있던 같은 모양의 반복문을 한 벌로 모았다.
+    /// </summary>
+    private IEnumerator PickFromList(string title, string[] labels, Action<int> onResult)
+    {
+        int selected = 0;
+
+        while (true)
+        {
+            panel.ShowList(BuildMenuText(title, labels, selected));
+
+            // 이 화면을 연 그 키가 곧바로 고르지 않도록 한 프레임 넘긴다.
+            yield return null;
+
+            if (GameInput.AssistPressed)
+            {
+                GameInput.ConsumeAssist();
+                onResult(-1);
+                yield break;
+            }
+
+            int step = GameInput.MenuStep;
+            if (step != 0)
+                selected = (selected + step + labels.Length) % labels.Length;
+
+            if (!GameInput.ActionPressed) continue;
+
+            onResult(selected);
+            yield break;
+        }
     }
 
     /// <summary>고른 것의 이름을 제목처럼 얹은 메뉴 글자.</summary>

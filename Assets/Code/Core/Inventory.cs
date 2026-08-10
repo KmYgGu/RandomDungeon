@@ -61,6 +61,25 @@ public class Inventory
     }
 
     /// <summary>인덱스를 가방 범위 안으로 되돌린다(위/아래 끝에서 반대편으로 순환).</summary>
+    /// <summary>
+    /// 이름순으로 정리한다. 정리한 뒤 keep 이 놓인 자리를 돌려준다.
+    ///
+    /// 커서가 가리키던 <b>물건</b>을 계속 가리키게 하려고 자리를 돌려준다.
+    /// 번호만 그대로 두면 정리 후 엉뚱한 물건이 선택된 상태가 되어, 곧바로
+    /// 누르던 손이 엉뚱한 것을 먹거나 던진다.
+    ///
+    /// 차고 있는 장비는 순서가 바뀌어도 괜찮다. Equipment 는 번호가 아니라
+    /// 오브젝트를 들고 있어서 자리가 바뀌어도 그대로 가리킨다.
+    /// </summary>
+    public int SortByName(GameObject keep)
+    {
+        items.Sort((a, b) => ItemOrder.CompareByName(
+            ItemInstance.DisplayNameOf(a), ItemInstance.DisplayNameOf(b)));
+
+        int moved = keep != null ? items.IndexOf(keep) : -1;
+        return moved >= 0 ? moved : 0;
+    }
+
     public int WrapIndex(int index)
     {
         if (IsEmpty) return 0;
@@ -87,7 +106,12 @@ public class Inventory
         {
             if (i > 0) sb.Append('\n');
             sb.Append(i == selectedIndex ? "> " : "  ");
-            sb.Append(items[i].name);
+            // 손으로 붙인 표식이 있으면 이름 앞에 얹는다.
+            sb.Append(ItemInstance.MarkPrefixOf(items[i]));
+
+            // 오브젝트 이름이 아니라 시트에 적힌 이름을 보여 준다.
+            // 프리팹 이름은 신원도 표시도 아니게 되었다.
+            sb.Append(ItemInstance.DisplayNameOf(items[i]));
         }
         return sb.ToString();
     }

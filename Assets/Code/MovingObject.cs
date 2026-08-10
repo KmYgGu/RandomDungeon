@@ -37,11 +37,18 @@ public abstract class MovingObject : MonoBehaviour
     /// </summary>
     protected Vector3 spriteHomePosition;
 
+    /// <summary>
+    /// 스프라이트가 평소에 가져야 할 크기. 구멍에 빠지는 연출이 여기로 돌아온다.
+    /// 위치와 같은 이유로 1 이라고 가정하지 않는다.
+    /// </summary>
+    protected Vector3 spriteHomeScale;
+
     protected virtual void Start()
     {
         childTransform = transform.Find("Sprite");
         spriteRenderer = childTransform.GetComponent<SpriteRenderer>();
         spriteHomePosition = childTransform.localPosition;
+        spriteHomeScale = childTransform.localScale;
 
         tilemap = GameObject.Find("FloorMap").GetComponent<Tilemap>();
         boxCollider = GetComponent<BoxCollider2D>();
@@ -98,14 +105,16 @@ public abstract class MovingObject : MonoBehaviour
     }
 
     /// <summary>
-    /// 실제로 좌표를 옮긴다.
+    /// 실제로 좌표를 옮긴다. <b>아무 검사도 하지 않으므로</b> 부르는 쪽이 먼저 확인해야 한다.
     ///
     /// 평소에는 Rigidbody2D.MovePosition 을 쓰지만, 빨리감기 중에는 쓸 수 없다.
     /// MovePosition 은 다음 물리 갱신에야 반영되므로, 같은 프레임에 여러 걸음을
     /// 내딛으면 두 번째 걸음이 아직 옛 좌표에서 출발해 제자리걸음이 된다.
     /// 그래서 빨리감기 중에는 좌표를 즉시 덮어쓴다.
+    ///
+    /// 적은 Move() 대신 이것을 직접 쓴다 — 이유는 Enemy.TryMoveAlong 참고.
     /// </summary>
-    private void MoveTo(Vector2 end)
+    protected void MoveTo(Vector2 end)
     {
         if (GameManager.FastForward)
         {
