@@ -34,7 +34,19 @@ static class Program
         TestGoldThrow();
         TestHungerWarning();
         TestConditionSheet();
+        TestTrapSheet();
         TestReadingTime();
+        TestMessageLog();
+        TestMonsterSheet();
+        TestItemSheet();
+        TestWarpDestination();
+        TestBlowOutcome();
+        TestBedrock();
+        TestTerrainFromAsset();
+        TestConditionTracker();
+        TestItemMark();
+        TestItemOrder();
+        TestWeightedPick();
 
         Console.WriteLine(failures == 0
             ? "\nALL PASS"
@@ -809,25 +821,25 @@ static class Program
 
         var rows = new List<ConditionEntity>
         {
-            new ConditionEntity { id = "poison", name = "독",
+            new ConditionEntity { id = 20001, id2 = "poison", name = "독",
                 explanation = "독에 의한 데미지를 입고 있어",
                 type = "해로움", effect = "턴당피해", value = 1, turn = 10 },
 
             // 엑셀에서 붙여 넣다 남은 탭·공백. id 가 미묘하게 달라지면 코드가 못 찾는다.
-            new ConditionEntity { id = "critup\t ", name = "치명타상승",
+            new ConditionEntity { id = 10001, id2 = "critup\t ", name = "치명타상승",
                 explanation = "평소보다 치명타가 잘 나오겠어",
                 type = "이로움", effect = "없음", value = 0, turn = 20 },
 
-            new ConditionEntity { id = "hungry", name = "배고픔",
+            new ConditionEntity { id = 20002, id2 = "hungry", name = "배고픔",
                 explanation = "배고픔을 느끼고 있어",
                 type = "해로움", effect = "없음", value = 0, turn = 0 },
 
             // 효과 이름을 잘못 적은 줄. 버리지 말고 '없음' 으로 두고 알려 준다.
-            new ConditionEntity { id = "typo", name = "오타",
+            new ConditionEntity { id = 20003, id2 = "typo", name = "오타",
                 explanation = "무언가 이상하다", type = "해로움",
                 effect = "턴당대미지", value = 0, turn = 0 },
 
-            new ConditionEntity { id = "   ", name = "빈 줄", explanation = "" },
+            new ConditionEntity { id = 20004, id2 = "   ", name = "빈 줄", explanation = "" },
         };
 
         var problems = new List<string>();
@@ -838,6 +850,16 @@ static class Program
 
         // 2) 칸 끝의 탭·공백을 털어 낸다.
         Check(defs[1].Id == "critup", $"id 의 탭이 안 지워짐: '{defs[1].Id}'");
+
+        // 2-1) 코드가 쓰는 이름은 표 번호가 아니라 id2 다.
+        //
+        //      시트에서 id 가 숫자로 바뀌었을 때 이것을 놓치면 Id 가 "20002" 가 되어
+        //      ConditionCatalog.HungryId("hungry") 로 찾을 수 없게 된다. 화면에서
+        //      배고픔·굶주림이 조용히 사라지고, 에러는 하나도 나지 않는다.
+        Check(defs[2].Id == "hungry", $"코드용 이름이 id2 가 아님: '{defs[2].Id}'");
+        Check(defs[2].Number == 20002, $"표 번호가 안 실림 {defs[2].Number}");
+        Check(ConditionCatalog.HungryId == "hungry" && ConditionCatalog.StarvingId == "starving",
+              "코드가 가리키는 이름이 시트의 id2 값과 어긋남");
 
         // 3) 값이 제대로 옮겨졌는가.
         Check(defs[0].Effect == ConditionEffect.DamagePerTurn, "효과를 못 알아봄");
@@ -883,10 +905,10 @@ static class Program
         Check(bottom.Contains("4. "), "끝까지 내렸는데 마지막 항목이 안 보임");
 
         // 스크롤은 목록 밖으로 나가지 않는다.
-        Check(ConditionReport.ClampOffset(-5, 3, 2) == 0, "위로 넘겨서 음수가 됨");
-        Check(ConditionReport.ClampOffset(99, 3, 2) == 1, "아래로 넘겨서 빈 화면이 됨");
-        Check(ConditionReport.ClampOffset(1, 3, 5) == 0, "다 들어가는데 스크롤이 됨");
-        Check(ConditionReport.ClampOffset(0, 0, 5) == 0, "빈 목록에서 스크롤이 생김");
+        Check(PageScroll.ClampOffset(-5, 3, 2) == 0, "위로 넘겨서 음수가 됨");
+        Check(PageScroll.ClampOffset(99, 3, 2) == 1, "아래로 넘겨서 빈 화면이 됨");
+        Check(PageScroll.ClampOffset(1, 3, 5) == 0, "다 들어가는데 스크롤이 됨");
+        Check(PageScroll.ClampOffset(0, 0, 5) == 0, "빈 목록에서 스크롤이 생김");
 
         // 어떤 줄 수에서도 마지막 항목까지 볼 수 있어야 한다.
         var many = new List<ConditionDefinition>();
@@ -895,7 +917,7 @@ static class Program
 
         for (int capacity = 1; capacity <= 6; capacity++)
         {
-            int last = ConditionReport.ClampOffset(int.MaxValue, many.Count, capacity);
+            int last = PageScroll.ClampOffset(int.MaxValue, many.Count, capacity);
             string tail = ConditionReport.BuildText(many, last, capacity);
             Check(tail.Contains($"{many.Count}. "),
                   $"capacity={capacity} 일 때 끝까지 내려도 마지막 줄이 안 보임");
@@ -904,6 +926,76 @@ static class Program
         }
 
         Console.WriteLine("  옮겨 담기 · 지저분한 칸 · 이상한 줄 알림 · 표시 순서 · 스크롤 검사 완료");
+    }
+
+    // ── 함정 표 ────────────────────────────────────────────────────────────
+    //
+    // 함정은 확률로 작동하고 효과도 제각각이라, 에디터에서 몇 번 밟아 보는 것으로는
+    // 표가 제대로 읽혔는지 알 수 없다. 특히 띄울 문구가 비어 있는 줄은 "가끔 아무
+    // 말도 없네" 로만 보여서 버그로 알아채기까지 오래 걸린다. 그래서 여기서 본다.
+    static void TestTrapSheet()
+    {
+        Console.WriteLine("[함정 표]");
+
+        var rows = new List<TrapEntity>
+        {
+            new TrapEntity { id = 10001, id2 = "dart", name = "독침",
+                explanation = "어디선가 독침이 날라왔다!", charani = "피격", note = "힘이 감소" },
+
+            new TrapEntity { id = 10006, id2 = "spin", name = "회전",
+                explanation = "빙글빙글 돌았다!", charani = "빙글빙글", note = "혼란 상태" },
+
+            new TrapEntity { id = 10005, id2 = "hole", name = "구멍",
+                explanation = "구멍으로 떨어졌다!", charani = "없음", note = "강제로 다음 층으로" },
+
+            // 문구를 아직 안 적은 줄. 작동해도 아무 말이 없으므로 알려 줘야 한다.
+            new TrapEntity { id = 10002, id2 = "warp", name = "워프",
+                explanation = "", charani = "빙글", note = "무작위 방 위치로 이동" },
+
+            // 몸짓 이름을 잘못 적은 줄. 버리지 말고 '없음' 으로 두고 알려 준다.
+            new TrapEntity { id = 10099, id2 = "typo\t ", name = "오타",
+                explanation = "무언가 이상하다", charani = "빙그르", note = "" },
+
+            new TrapEntity { id = 10098, id2 = "   ", name = "빈 줄" },
+        };
+
+        var problems = new List<string>();
+        var defs = TrapSheet.FromEntities(rows, problems);
+
+        // 1) id2 가 빈 줄만 버린다.
+        Check(defs.Count == 5, $"옮겨 담은 줄 수가 다름 {defs.Count} (기대 5)");
+
+        // 2) 코드가 쓰는 이름은 id2, 번호는 따로 실린다.
+        Check(defs[0].Id == "dart", $"코드용 이름이 id2 가 아님: '{defs[0].Id}'");
+        Check(defs[0].Number == 10001, $"표 번호가 안 실림 {defs[0].Number}");
+        Check(defs[4].Id == "typo", $"id2 의 탭이 안 지워짐: '{defs[4].Id}'");
+
+        // 3) 몸짓을 알아본다. 설명해 준 셋과 '없음' 이 전부 이름을 가져야 한다.
+        Check(defs[0].Animation == TrapAnimation.Hit, "'피격' 을 못 알아봄");
+        Check(defs[1].Animation == TrapAnimation.SpinFast, "'빙글빙글' 을 못 알아봄");
+        Check(defs[2].Animation == TrapAnimation.None, "'없음' 을 못 알아봄");
+        Check(defs[3].Animation == TrapAnimation.Spin, "'빙글' 을 못 알아봄");
+        Check(TrapSheet.ParseAnimation("수면", "gas") == TrapAnimation.Sleep, "'수면' 을 못 알아봄");
+
+        // 한 바퀴와 두 바퀴는 다른 몸짓이다. 같은 값으로 뭉뚱그리면
+        // 워프와 혼란이 화면에서 구별되지 않는다.
+        Check(TrapAnimation.Spin != TrapAnimation.SpinFast, "빙글과 빙글빙글이 같은 값");
+
+        // 4) 문구와 설정은 서로 다른 열이다. 뒤바뀌면 설정 메모가 화면에 뜬다.
+        Check(defs[0].Message == "어디선가 독침이 날라왔다!", $"띄울 문구가 다름: '{defs[0].Message}'");
+        Check(defs[0].Note == "힘이 감소", $"설정 메모가 다름: '{defs[0].Note}'");
+
+        // 5) 이상한 줄을 알려 준다 — 빈 문구 하나, 모르는 몸짓 하나.
+        Check(problems.Count == 2, $"이상한 줄을 {problems.Count}건 알림 (기대 2)");
+        Check(problems.Exists(p => p.Contains("warp")), "문구가 빈 줄을 안 알려 줌");
+        Check(problems.Exists(p => p.Contains("typo")), "몸짓이 이상한 줄을 안 알려 줌");
+        Check(defs[4].Animation == TrapAnimation.None, "모르는 몸짓이 '없음' 이 아님");
+
+        // 6) 빈 표에도 넘어지지 않는다.
+        Check(TrapSheet.FromEntities(null).Count == 0, "null 에서 줄이 나옴");
+        Check(TrapSheet.FromEntities(new List<TrapEntity>()).Count == 0, "빈 표에서 줄이 나옴");
+
+        Console.WriteLine("  옮겨 담기 · 몸짓 다섯 가지 · 빈 문구 알림 · 문구/설정 구분 검사 완료");
     }
 
     // ── 중요한 알림을 붙잡아 두는 시간 ─────────────────────────────────────
@@ -938,6 +1030,839 @@ static class Program
         }
 
         Console.WriteLine($"  최소 {MessageBoxView.ReadingSeconds(""):F2}s ~ 최대 {longLine:F2}s 검사 완료");
+    }
+
+    // ── 지나간 메시지의 이력 ────────────────────────────────────────────────
+    //
+    // 메시지 창은 3초면 닫히고 달릴 때는 연출 대기까지 건너뛰므로, 눈으로
+    // 확인하기 어려운 화면이다. 두 줄짜리 메시지가 섞이면 판에 들어가는 줄 수
+    // 계산이 어긋나 마지막 줄이 잘리는데, 그 역시 실제로 스크롤을 끝까지
+    // 내려 봐야 드러난다. 그래서 여기서 확인한다.
+    static void TestMessageLog()
+    {
+        Console.WriteLine("[메시지 이력]");
+
+        var log = new MessageLog();
+
+        // 1) 아무것도 없을 때.
+        Check(log.Count == 0, $"새 이력에 줄이 있음 {log.Count}");
+        Check(log.BuildText(0, 5) == MessageLog.EmptyText, "빈 이력인데 기본 문구가 아님");
+
+        // 2) 두 줄짜리 메시지는 두 줄로 쌓인다. 순서는 쓰인 그대로.
+        log.Add("고블린를 쓰러뜨렸다.\n5경험치를 얻었다.");
+        Check(log.Count == 2, $"두 줄짜리가 {log.Count}줄로 쌓임 (기대 2)");
+
+        string both = log.BuildText(0, 5);
+        Check(both.StartsWith("고블린를 쓰러뜨렸다."), "두 줄의 앞뒤가 뒤집힘:\n" + both);
+        Check(both.EndsWith("5경험치를 얻었다."), "두 줄의 앞뒤가 뒤집힘:\n" + both);
+
+        // 3) 뜨지 않은 것은 쌓이지 않는다.
+        log.Add(null);
+        log.Add("");
+        log.Add("   \n\n  ");
+        Check(log.Count == 2, $"빈 메시지가 쌓임 {log.Count}");
+
+        // 4) 오래된 것부터 버린다. 최근 것은 반드시 남는다.
+        var full = new MessageLog();
+        for (int i = 0; i < MessageLog.MaxLines + 50; i++) full.Add("줄 " + i);
+
+        Check(full.Count == MessageLog.MaxLines,
+              $"한도를 넘겨 쌓임 {full.Count} (한도 {MessageLog.MaxLines})");
+
+        string tail = full.BuildText(int.MaxValue, 3);
+        Check(tail.EndsWith("줄 " + (MessageLog.MaxLines + 49)),
+              "맨 끝이 가장 최근 줄이 아님:\n" + tail);
+        Check(!full.BuildText(0, MessageLog.MaxLines).Contains("줄 0\n"),
+              "한도를 넘겼는데 가장 오래된 줄이 남아 있음");
+
+        // 5) 열자마자 보이는 자리(맨 끝)에 최근 것이 화면 가득 들어와야 한다.
+        //    한 줄만 보이고 나머지가 빈 채로 남으면 스크롤 계산이 어긋난 것이다.
+        for (int capacity = 1; capacity <= 8; capacity++)
+        {
+            int last = PageScroll.ClampOffset(int.MaxValue, full.Count, capacity);
+            string page = full.BuildText(last, capacity);
+
+            Check(page.Split('\n').Length == Math.Min(capacity, full.Count),
+                  $"capacity={capacity} 일 때 맨 끝 화면의 줄 수가 다름");
+            Check(page.EndsWith("줄 " + (MessageLog.MaxLines + 49)),
+                  $"capacity={capacity} 일 때 맨 끝에서 최근 줄이 안 보임");
+        }
+
+        // 6) 위로 올리면 과거로 간다.
+        Check(full.BuildText(0, 1).Trim() == "줄 50", "맨 위가 가장 오래된 줄이 아님");
+
+        // 7) 판을 새로 시작하면 비워진다.
+        full.Clear();
+        Check(full.Count == 0, $"비운 뒤에도 줄이 남음 {full.Count}");
+        Check(full.BuildText(0, 5) == MessageLog.EmptyText, "비운 뒤 기본 문구가 아님");
+
+        Console.WriteLine($"  줄 쪼개기 · 한도 {MessageLog.MaxLines}줄 · 맨 끝에서 열기 · 비우기 검사 완료");
+    }
+
+    // ── 적 표 옮겨 담기 ─────────────────────────────────────────────────────
+    //
+    // 적 수치가 코드에 박혀 있던 것을 시트로 옮겼다. 시트 쪽이 잘못 읽히면
+    // 적이 체력 0 으로 태어나거나 경험치가 0 이 되는데, 에디터에서 한 마리
+    // 잡아 보고 "그런가 보다" 하고 넘어가기 쉬운 종류라 여기서 확인한다.
+    static void TestMonsterSheet()
+    {
+        Console.WriteLine("[적 표]");
+
+        var rows = new List<MonsterEntity>
+        {
+            new MonsterEntity { id = 10001, name = "걸어다니는 시체",
+                hp = 5, atk = 2, def = 2, exp = 3,
+                rate = "중", category = "몬스터", explanation = "발견하면 다가 오겠어" },
+
+            // 엑셀에서 붙여 넣다 남은 탭·공백.
+            new MonsterEntity { id = 10002, name = "박쥐\t ", hp = 3, atk = 4, def = 1, exp = 5,
+                rate = "상 ", category = "몬스터" },
+
+            // 빈도를 잘못 적은 줄. 버리지 말고 '중' 으로 두고 알려 준다.
+            new MonsterEntity { id = 10003, name = "슬라임", hp = 8, atk = 1, def = 3, exp = 2,
+                rate = "가끔" },
+
+            // 이름이 빠진 줄. 쓰러뜨렸을 때 문장만 남으므로 알려 준다.
+            new MonsterEntity { id = 10004, name = "", hp = 1, atk = 1, def = 1, exp = 1,
+                rate = "하" },
+
+            // 번호가 없는 줄은 프리팹이 찾을 길이 없다.
+            new MonsterEntity { id = 0, name = "이름만 있는 줄" },
+        };
+
+        var problems = new List<string>();
+        var defs = MonsterSheet.FromEntities(rows, problems);
+
+        // 1) 번호 없는 줄만 버린다.
+        Check(defs.Count == 4, $"옮겨 담은 줄 수가 다름 {defs.Count} (기대 4)");
+
+        // 2) 수치가 제자리로 갔는가.
+        //    검사는 세 값이 서로 다른 줄로 한다 — 실제 시트의 첫 줄은
+        //    atk 도 def 도 2 라서, 두 열이 뒤바뀌어도 티가 나지 않는다.
+        Check(defs[1].Hp == 3, $"체력이 어긋남 {defs[1].Hp} (기대 3)");
+        Check(defs[1].Attack == 4, $"공격력이 어긋남 {defs[1].Attack} (기대 4)");
+        Check(defs[1].Defense == 1, $"방어력이 어긋남 {defs[1].Defense} (기대 1)");
+        Check(defs[1].Exp == 5, $"경험치가 어긋남 {defs[1].Exp} (기대 5)");
+
+        Check(defs[0].Name == "걸어다니는 시체", $"이름이 어긋남 '{defs[0].Name}'");
+        Check(defs[0].Description == "발견하면 다가 오겠어", $"설명이 어긋남 '{defs[0].Description}'");
+        Check(defs[0].Category == "몬스터", $"갈래가 어긋남 '{defs[0].Category}'");
+
+        // 3) 칸 끝의 탭·공백을 털어 낸다.
+        Check(defs[1].Name == "박쥐", $"이름의 탭이 안 지워짐: '{defs[1].Name}'");
+        Check(defs[1].Rate == SpawnRate.High, "공백이 붙은 '상 ' 을 못 알아봄");
+
+        // 4) 빈도 세 가지.
+        Check(defs[0].Rate == SpawnRate.Medium, "'중' 을 못 알아봄");
+        Check(defs[3].Rate == SpawnRate.Low, "'하' 를 못 알아봄");
+
+        // 5) 모르는 빈도는 '중' 으로 두되 무엇이 이상한지 알려 준다.
+        Check(defs[2].Rate == SpawnRate.Medium, "모르는 빈도가 '중' 이 아님");
+        Check(problems.Count == 2, $"이상한 줄을 {problems.Count}건 알림 (기대 2)");
+
+        bool toldRate = false, toldName = false;
+        foreach (string problem in problems)
+        {
+            if (problem.Contains("10003")) toldRate = true;
+            if (problem.Contains("10004")) toldName = true;
+        }
+        Check(toldRate, "빈도가 이상한 줄의 번호를 안 알려 줌");
+        Check(toldName, "이름이 빈 줄의 번호를 안 알려 줌");
+
+        // 6) 치명타는 적마다 다르고, 안 적으면 0(치명타 없음)이다.
+        //    기본이 0 이어야 "저 녀석은 조심해야 한다" 가 성립한다.
+        Check(defs[0].CriticalPercent == 0, $"안 적었는데 치명타가 붙음 {defs[0].CriticalPercent}");
+
+        var crits = new List<MonsterEntity>
+        {
+            new MonsterEntity { id = 20001, name = "회심의 적", critical = 30, rate = "중" },
+            new MonsterEntity { id = 20002, name = "음수", critical = -5, rate = "중" },
+            new MonsterEntity { id = 20003, name = "초과", critical = 150, rate = "중" },
+        };
+        var critProblems = new List<string>();
+        var critDefs = MonsterSheet.FromEntities(crits, critProblems);
+
+        Check(critDefs[0].CriticalPercent == 30, $"적은 값이 안 들어감 {critDefs[0].CriticalPercent}");
+        Check(critDefs[1].CriticalPercent == 0, $"음수가 0 으로 안 잘림 {critDefs[1].CriticalPercent}");
+        Check(critDefs[2].CriticalPercent == 100, $"100 초과가 안 잘림 {critDefs[2].CriticalPercent}");
+        Check(critProblems.Count == 2, $"범위 밖을 {critProblems.Count}건 알림 (기대 2)");
+
+        // 7) 빈 표에도 넘어지지 않는다.
+        Check(MonsterSheet.FromEntities(null).Count == 0, "null 에서 줄이 나옴");
+        Check(MonsterSheet.FromEntities(new List<MonsterEntity>()).Count == 0, "빈 표에서 줄이 나옴");
+
+        Console.WriteLine("  옮겨 담기 · 수치 자리 · 빈도 세 가지 · 치명타 확률 · 이상한 줄 알림 검사 완료");
+    }
+
+    // ── 아이템 표 옮겨 담기 ─────────────────────────────────────────────────
+    //
+    // 아이템은 조회를 이름에서 번호로 옮긴 참이다. 시트 쪽이 잘못 읽히면
+    // 장비가 아닌 것이 장비가 되거나 가격이 0 이 되는데, 에디터에서는
+    // 한 개 집어 보고 넘어가기 쉬운 종류라 여기서 확인한다.
+    static void TestItemSheet()
+    {
+        Console.WriteLine("[아이템 표]");
+
+        var rows = new List<ItemEntity>
+        {
+            new ItemEntity { id = 20001, name = "사과", explanation = "만복도를 30 회복합니다.",
+                sellprice = 50, itemtype = "food", equipslot = "none", basepower = 0, droprate = "B" },
+
+            // 엑셀에서 붙여 넣다 남은 탭·공백, 그리고 대소문자 섞임.
+            new ItemEntity { id = 10001, name = "기력회복약\t ", explanation = "힘을 회복합니다.",
+                sellprice = 200, itemtype = "Expendables", equipslot = " ", basepower = 0, droprate = "B" },
+
+            new ItemEntity { id = 50001, name = "청동검", explanation = "낡은 검이다.",
+                sellprice = 300, itemtype = "equipment", equipslot = "weapon", basepower = 3, droprate = "B" },
+
+            // 장비가 아닌데 성능이 적힌 줄. 0 으로 두고 알려 준다.
+            new ItemEntity { id = 60001, name = "이상한 돌", sellprice = 10,
+                itemtype = "special", equipslot = "none", basepower = 7, droprate = "B" },
+
+            // 갈래를 잘못 적은 줄.
+            new ItemEntity { id = 70001, name = "오타", itemtype = "포션", equipslot = "none", droprate = "B" },
+
+            // 번호가 없는 줄은 프리팹이 찾을 길이 없다.
+            new ItemEntity { id = 0, name = "이름만 있는 줄" },
+        };
+
+        var problems = new List<string>();
+        var defs = ItemSheet.FromEntities(rows, problems);
+
+        // 1) 번호 없는 줄만 버린다.
+        Check(defs.Count == 5, $"옮겨 담은 줄 수가 다름 {defs.Count} (기대 5)");
+
+        // 2) 값이 제자리로 갔는가.
+        Check(defs[0].Name == "사과" && defs[0].SellPrice == 50,
+              $"이름·가격이 어긋남 '{defs[0].Name}' {defs[0].SellPrice}");
+        Check(defs[0].Kind == ItemKind.Food, "'food' 를 못 알아봄");
+        Check(defs[0].Description == "만복도를 30 회복합니다.", $"설명이 어긋남 '{defs[0].Description}'");
+
+        // 3) 칸 끝의 탭·공백을 털어 내고, 대소문자를 가리지 않는다.
+        Check(defs[1].Name == "기력회복약", $"이름의 탭이 안 지워짐: '{defs[1].Name}'");
+        Check(defs[1].Kind == ItemKind.Expendables, "'Expendables' 를 못 알아봄");
+        Check(defs[1].Slot == EquipmentSlot.None, "공백뿐인 칸이 장비 자리로 읽힘");
+
+        // 4) 장비.
+        Check(defs[2].Slot == EquipmentSlot.Weapon, "'weapon' 을 못 알아봄");
+
+        // 표에는 복수형(accessories)으로 적혀 있다. 그것 하나 때문에
+        // 장비가 아닌 것으로 읽히면 반지가 영영 안 끼워진다.
+        Check(ItemSheet.ParseSlot("accessories", 0) == EquipmentSlot.Accessory,
+              "복수형 'accessories' 를 못 알아봄");
+        Check(ItemSheet.ParseSlot("accessory", 0) == EquipmentSlot.Accessory,
+              "단수형 'accessory' 를 못 알아봄");
+        Check(defs[2].BasePower == 3, $"기본 성능이 어긋남 {defs[2].BasePower}");
+        Check(defs[2].IsEquipment, "무기인데 장비가 아니라고 함");
+
+        // 5) 장비가 아니면 성능은 0 이고, 그 사실을 알려 준다.
+        Check(!defs[3].IsEquipment, "장비가 아닌데 장비라고 함");
+        Check(defs[3].BasePower == 0, $"장비가 아닌데 성능이 남음 {defs[3].BasePower}");
+
+        // 6) 모르는 갈래는 기본값으로 두되 알려 준다.
+        Check(defs[4].Kind == ItemKind.Expendables, "모르는 갈래가 기본값이 아님");
+
+        Check(problems.Count == 2, $"이상한 줄을 {problems.Count}건 알림 (기대 2)");
+
+        bool toldPower = false, toldKind = false;
+        foreach (string problem in problems)
+        {
+            if (problem.Contains("60001")) toldPower = true;
+            if (problem.Contains("70001")) toldKind = true;
+        }
+        Check(toldPower, "장비가 아닌데 성능이 적힌 줄을 안 알려 줌");
+        Check(toldKind, "갈래가 이상한 줄을 안 알려 줌");
+
+        // 7) 빈 표에도 넘어지지 않는다.
+        Check(ItemSheet.FromEntities(null).Count == 0, "null 에서 줄이 나옴");
+
+        // ── 장비 특수 능력 ────────────────────────────────────────────────
+        var gear = new List<ItemEntity>
+        {
+            new ItemEntity { id = 50001, name = "나무몽둥이", itemtype = "equipment",
+                equipslot = "weapon", basepower = 2,
+                ability = "경험치증가", abilityvalue = 1, baseonly = 1, droprate = "B" },
+
+            new ItemEntity { id = 60001, name = "헌옷", itemtype = "equipment",
+                equipslot = "armor", basepower = 1,
+                ability = "치명타무효", abilityvalue = 0, droprate = "B" },
+
+            new ItemEntity { id = 70001, name = "구리반지", itemtype = "equipment",
+                equipslot = "accessories", ability = "만복도절약", abilityvalue = 5, droprate = "B" },
+
+            // 숫자를 쓰는 능력인데 값이 없다. 아무 일도 안 일어나므로 알려야 한다.
+            new ItemEntity { id = 50002, name = "빈몽둥이", itemtype = "equipment",
+                equipslot = "weapon", ability = "경험치증가", abilityvalue = 0 },
+
+            // 장비가 아닌데 능력이 적힌 줄.
+            new ItemEntity { id = 20002, name = "이상한사과", itemtype = "food",
+                equipslot = "none", ability = "치명타무효", droprate = "B" },
+
+            // 모르는 능력.
+            new ItemEntity { id = 50003, name = "오타몽둥이", itemtype = "equipment",
+                equipslot = "weapon", ability = "무적", droprate = "B" },
+        };
+
+        var gearProblems = new List<string>();
+        var gearDefs = ItemSheet.FromEntities(gear, gearProblems);
+
+        Check(gearDefs[0].Ability == EquipAbility.BonusExp, "'경험치증가' 를 못 알아봄");
+        Check(gearDefs[0].AbilityValue == 1, $"능력 값이 어긋남 {gearDefs[0].AbilityValue}");
+        Check(gearDefs[0].BaseOnly, "baseonly 1 인데 꺼져 있음");
+
+        Check(gearDefs[1].Ability == EquipAbility.NegateCritical, "'치명타무효' 를 못 알아봄");
+        Check(!gearDefs[1].BaseOnly, "baseonly 0 인데 켜져 있음");
+
+        Check(gearDefs[2].Ability == EquipAbility.SlowHunger, "'만복도절약' 을 못 알아봄");
+        Check(gearDefs[2].Slot == EquipmentSlot.Accessory, "복수형 자리를 못 알아봄");
+
+        // 치명타무효는 숫자를 쓰지 않으므로 값이 0 이어도 조용해야 한다.
+        Check(!ItemSheet.NeedsValue(EquipAbility.NegateCritical), "치명타무효가 값을 요구함");
+        Check(ItemSheet.NeedsValue(EquipAbility.BonusExp), "경험치증가가 값을 안 씀");
+
+        // 장비가 아니면 능력을 달지 않는다. 달아 두면 안 차고도 효과를 보는 줄 안다.
+        Check(gearDefs[4].Ability == EquipAbility.None, "장비가 아닌데 능력이 붙음");
+
+        bool toldNoValue = false, toldNotGear = false, toldUnknown = false;
+        foreach (string problem in gearProblems)
+        {
+            if (problem.Contains("50002")) toldNoValue = true;
+            if (problem.Contains("20002")) toldNotGear = true;
+            if (problem.Contains("50003")) toldUnknown = true;
+        }
+        Check(toldNoValue, "값 없는 능력을 안 알려 줌");
+        Check(toldNotGear, "장비가 아닌데 능력이 적힌 줄을 안 알려 줌");
+        Check(toldUnknown, "모르는 능력을 안 알려 줌");
+
+        // ── 드랍 등급 ─────────────────────────────────────────────────────
+        //
+        // 시트에는 A+ · B- 같은 등급으로 적는다. 등급 사이가 뒤집히면 표를
+        // 채우는 사람이 등급으로 견줄 수가 없다.
+        var ladder = new[] { "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-" };
+        float previous = float.MaxValue;
+
+        foreach (string grade in ladder)
+        {
+            float weight = ItemSheet.ParseDropRate(grade, 0);
+            Check(weight > 0f, $"{grade} 의 가중치가 0 이다");
+            Check(weight <= previous, $"{grade} 가 앞 등급보다 흔하다 ({weight} > {previous})");
+            previous = weight;
+        }
+
+        // 아래로 내려가도 1 밑으로는 안 간다. 0 이 되면 "안 나옴" 과 뜻이 겹친다.
+        Check(ItemSheet.ParseDropRate("Z-", 0) >= 1f, "낮은 등급이 0 이 되어 버림");
+
+        // 대소문자를 가리지 않는다.
+        Check(ItemSheet.ParseDropRate("a+", 0) == ItemSheet.ParseDropRate("A+", 0),
+              "소문자 등급을 다르게 봄");
+
+        // 비었거나 이상한 값은 0(안 나옴)이고 알려 준다.
+        var gradeProblems = new List<string>();
+        Check(ItemSheet.ParseDropRate("", 11, gradeProblems) == 0f, "빈 등급이 0 이 아님");
+        Check(ItemSheet.ParseDropRate("특급", 22, gradeProblems) == 0f, "모르는 등급이 0 이 아님");
+        Check(ItemSheet.ParseDropRate("A*", 33, gradeProblems) == 0f, "이상한 부호가 0 이 아님");
+        Check(gradeProblems.Count == 3, $"이상한 등급을 {gradeProblems.Count}건 알림 (기대 3)");
+
+        Console.WriteLine("  옮겨 담기 · 대소문자 · 장비 자리 · 성능 정리 · 특수 능력 · 드랍 등급 · 이상한 줄 알림 검사 완료");
+    }
+
+    // ── 워프가 데려갈 자리 ──────────────────────────────────────────────────
+    //
+    // 겹쳐 서면 둘 다 빠져나오지 못하고, 제자리로 워프하면 함정을 밟은 뜻이
+    // 없어진다. 둘 다 "가끔" 일어나는 종류라 눈으로는 잡기 어렵다.
+    //
+    // 여기 숫자는 전부 칸 좌표다. 예전에는 월드 좌표(칸 중심이 x+0.5)로 검사해서
+    // 반 칸 어긋남과 한 칸 넘침을 두 번 다 놓쳤다 — 검사에 쓴 방이 정수 좌표라
+    // 어긋나도 값이 같았고, 범위를 넉넉히 잡아 두어 한 칸 넘쳐도 통과했다.
+    static void TestWarpDestination()
+    {
+        Console.WriteLine("[워프 목적지]");
+
+        // 방 셋. 안쪽 칸들이라 벽은 이미 빠져 있다.
+        var rooms = new List<RectInt>
+        {
+            new RectInt(1, 1, 3, 3),      // 0: 칸 (1,1)~(3,3)  아홉 칸
+            new RectInt(10, 1, 2, 2),     // 1: 칸 (10,1)~(11,2) 네 칸
+            new RectInt(20, 20, 1, 1),    // 2: 칸 (20,20)      한 칸
+        };
+
+        var rnd = new System.Random(11);
+        Func<int, int, int> next = (min, max) => rnd.Next(min, max);
+
+        var inRoom0 = new Vector3Int(2, 2, 0);
+
+        // 1) 지금 있는 방은 고르지 않는다. 그리고 벽 안으로 나가지 않는다.
+        var seen = new HashSet<Vector3Int>();
+        for (int i = 0; i < 400; i++)
+        {
+            Check(TrapEffects.TryPickWarpDestination(rooms, null, inRoom0, next, out Vector3Int to),
+                  "갈 곳이 있는데 못 찾음");
+            Check(!rooms[0].Contains(new Vector2Int(to.x, to.y)), $"같은 방 안으로 워프함 {to}");
+            Check(rooms[1].Contains(new Vector2Int(to.x, to.y))
+                  || rooms[2].Contains(new Vector2Int(to.x, to.y)),
+                  $"어느 방에도 없는 칸으로 워프함 {to}");
+            seen.Add(to);
+        }
+
+        // 방 1(네 칸) + 방 2(한 칸) = 다섯. 여섯이면 한 칸 넘친 것이고
+        // 넷이면 모자란 것이다. 개수를 세는 것이 가장 확실하다.
+        Check(seen.Count == 5, $"갈 수 있는 칸 수가 다름 {seen.Count} (기대 5)");
+
+        // 2) 누가 서 있는 칸은 고르지 않는다.
+        //    방 1 을 한 칸만 남기고 채우고, 방 2 도 막는다.
+        var crowded = new List<Vector3Int>
+        {
+            new Vector3Int(10, 1, 0), new Vector3Int(10, 2, 0), new Vector3Int(11, 2, 0),
+            new Vector3Int(20, 20, 0),
+        };
+        for (int i = 0; i < 200; i++)
+        {
+            Check(TrapEffects.TryPickWarpDestination(rooms, crowded, inRoom0, next, out Vector3Int to),
+                  "빈 칸이 하나 있는데 못 찾음");
+            Check(to == new Vector3Int(11, 1, 0), $"적이 선 칸으로 워프함 {to}");
+        }
+
+        // 3) 갈 방이 가득 차면 다른 방으로 넘어간다.
+        var room1Full = new List<Vector3Int>
+        {
+            new Vector3Int(10, 1, 0), new Vector3Int(10, 2, 0),
+            new Vector3Int(11, 1, 0), new Vector3Int(11, 2, 0),
+        };
+        for (int i = 0; i < 200; i++)
+        {
+            Check(TrapEffects.TryPickWarpDestination(rooms, room1Full, inRoom0, next, out Vector3Int to),
+                  "다른 방이 남았는데 포기함");
+            Check(to == new Vector3Int(20, 20, 0), $"가득 찬 방으로 워프함 {to}");
+        }
+
+        // 4) 방이 하나뿐이면 그 방 안에서 옮긴다(제자리 규칙보다 우선).
+        var single = new List<RectInt> { rooms[0] };
+        Check(TrapEffects.TryPickWarpDestination(single, null, inRoom0, next, out Vector3Int same),
+              "방이 하나뿐인데 갈 곳이 없다고 함");
+        Check(rooms[0].Contains(new Vector2Int(same.x, same.y)),
+              $"하나뿐인 방 밖으로 나감 {same}");
+
+        // 5) 갈 곳이 정말 없으면 false. 빈 목록에도 넘어지지 않는다.
+        Check(!TrapEffects.TryPickWarpDestination(
+                  new List<RectInt>(), null, inRoom0, next, out _), "방이 없는데 자리를 찾음");
+        Check(!TrapEffects.TryPickWarpDestination(null, null, inRoom0, next, out _),
+              "null 에서 자리를 찾음");
+
+        var allTaken = new List<Vector3Int>();
+        for (int x = 1; x <= 3; x++)
+            for (int y = 1; y <= 3; y++) allTaken.Add(new Vector3Int(x, y, 0));
+        Check(!TrapEffects.TryPickWarpDestination(single, allTaken, inRoom0, next, out _),
+              "빈 칸이 없는데 자리를 찾음");
+
+        Console.WriteLine("  다른 방 우선 · 적 칸 제외 · 가득 찬 방 건너뛰기 · 칸 수 · 갈 곳 없음 검사 완료");
+    }
+
+    // ── 날려진 끝에 무슨 일이 일어나는가 ────────────────────────────────────
+    //
+    // 물·용암·절벽에 떨어지는 것은 실제로 밟아 보기 전에는 확인하기 어렵고,
+    // 용암 피해가 죽음으로 이어지면 판이 그대로 끝난다.
+    static void TestBlowOutcome()
+    {
+        Console.WriteLine("[날리기 결말]");
+
+        // 1) 평범한 바닥. 벽에 부딪혔는지가 갈림길이다.
+        Check(TrapEffects.ResolveBlow(TileRules.TerrainKind.Floor, false)
+              == TrapEffects.BlowOutcome.Landed, "그냥 떨어졌는데 다른 일이 남");
+        Check(TrapEffects.ResolveBlow(TileRules.TerrainKind.Floor, true)
+              == TrapEffects.BlowOutcome.HitWall, "벽에 부딪혔는데 그냥 착지로 봄");
+
+        // 2) 지형이 벽보다 우선이다. 벽에 부딪히며 물에 빠질 수 있는데,
+        //    둘을 다 적용하면 피해가 겹쳐 갑자기 죽는다.
+        foreach (bool wall in new[] { false, true })
+        {
+            Check(TrapEffects.ResolveBlow(TileRules.TerrainKind.Water, wall)
+                  == TrapEffects.BlowOutcome.Water, $"물이 물로 안 나옴 (벽={wall})");
+            Check(TrapEffects.ResolveBlow(TileRules.TerrainKind.Lava, wall)
+                  == TrapEffects.BlowOutcome.Lava, $"용암이 용암으로 안 나옴 (벽={wall})");
+            Check(TrapEffects.ResolveBlow(TileRules.TerrainKind.Pit, wall)
+                  == TrapEffects.BlowOutcome.Pit, $"절벽이 절벽으로 안 나옴 (벽={wall})");
+        }
+
+        // 3) 용암 피해는 지금 체력의 절반이고, 이것만으로는 죽지 않는다.
+        for (int hp = 1; hp <= 60; hp++)
+        {
+            int damage = TrapEffects.LavaDamage(hp);
+            Check(damage < hp, $"체력 {hp} 에서 용암이 죽임 (피해 {damage})");
+            Check(damage == hp / 2, $"체력 {hp} 에서 절반이 아님 (피해 {damage})");
+        }
+
+        Check(TrapEffects.LavaDamage(1f) == 0, "체력 1 에서 용암이 죽임");
+        Check(TrapEffects.LavaDamage(0f) == 0, "체력 0 에서 음수 피해");
+        Check(TrapEffects.LavaDamage(20f) == 10, "체력 20 의 절반이 10 이 아님");
+
+        // 4) 날리는 거리와 벽 피해가 뜻대로 있는가.
+        Check(TrapEffects.BlowDistance == 8, $"날리는 거리가 다름 {TrapEffects.BlowDistance}");
+        Check(TrapEffects.BlowWallDamage == 5, $"벽 피해가 다름 {TrapEffects.BlowWallDamage}");
+
+        Console.WriteLine("  지형 우선 · 벽 부딪힘 · 용암 절반(죽지 않음) 검사 완료");
+    }
+
+    // ── 맵 끝자락(허물 수 없는 벽) ──────────────────────────────────────────
+    //
+    // 겉모습이 보통 벽과 같아서 눈으로는 구별이 안 된다. 통행 판정에서 벽과
+    // 똑같이 다뤄지지 않으면 길찾기가 맵 밖으로 새고, 반대로 허물 수 있게
+    // 되면 플레이어가 맵 밖으로 나가 돌아올 길이 없어진다.
+    static void TestBedrock()
+    {
+        Console.WriteLine("[맵 끝자락]");
+
+        string bedrock = TileRules.BedrockTileNames[0];
+        string wall = TileRules.ImpassableTileNames[0];
+        string water = TileRules.WaterTileNames[0];
+
+        // 1) 통행 판정에서는 보통 벽과 똑같다.
+        Check(TileRules.KindOfTile(bedrock) == TileRules.TerrainKind.Wall,
+              "끝자락이 벽으로 안 나옴");
+        Check(TileRules.KindOfTile(bedrock) == TileRules.KindOfTile(wall),
+              "끝자락과 보통 벽의 판정이 다름");
+
+        // 2) 허물 수 있는가 — 여기만 다르다.
+        Check(!TileRules.IsDestructible(bedrock), "끝자락을 허물 수 있다고 함");
+        Check(TileRules.IsDestructible(wall), "보통 벽을 못 허문다고 함");
+        Check(TileRules.IsDestructible(water), "물을 못 없앤다고 함");
+        Check(TileRules.IsDestructible((string)null), "빈 칸을 못 없앤다고 함");
+
+        // 3) 이름 목록이 서로 겹치면 판정 순서에 따라 답이 달라진다.
+        foreach (string name in TileRules.BedrockTileNames)
+        {
+            Check(!TileRules.ImpassableTileNames.Contains(name),
+                  $"'{name}' 이 보통 벽 목록에도 있음");
+            Check(!TileRules.WaterTileNames.Contains(name),
+                  $"'{name}' 이 물 목록에도 있음");
+            Check(!TileRules.LavaTileNames.Contains(name),
+                  $"'{name}' 이 용암 목록에도 있음");
+            Check(!TileRules.PitTileNames.Contains(name),
+                  $"'{name}' 이 구멍 목록에도 있음");
+        }
+
+        Console.WriteLine("  벽과 같은 통행 판정 · 허물 수 없음 · 이름 겹침 없음 검사 완료");
+    }
+
+    // ── 지형은 타일 애셋이 정한다 ───────────────────────────────────────────
+    //
+    // 이름으로 가르던 시절에는 2스테이지 벽("S2Wall")이 어느 목록에도 없어서
+    // 걸어서 통과되는 벽이 되었다. 에러가 나지 않는 종류라 여기서 지킨다.
+    static void TestTerrainFromAsset()
+    {
+        Console.WriteLine("[타일이 아는 지형]");
+
+        string wallName = TileRules.ImpassableTileNames[0];
+        string bedrockName = TileRules.BedrockTileNames[0];
+
+        // 1) 애셋이 답하면 그것이 이긴다. 이름이 무엇이든 상관없다.
+        var stage2Wall = new FakeTerrainTile(TileRules.TerrainKind.Wall, destructible: true);
+        Check(TileRules.Resolve(stage2Wall, "S2Wall") == TileRules.TerrainKind.Wall,
+              "이름이 목록에 없는 벽을 벽으로 못 알아봄");
+        Check(TileRules.Resolve(stage2Wall, "아무이름") == TileRules.TerrainKind.Wall,
+              "애셋이 답했는데 이름을 따라감");
+
+        // 2) 이름이 벽 목록에 있어도 애셋이 물이라면 물이다.
+        //    겉모습과 규칙이 어긋날 수 있다는 것이 이 방식의 핵심이다.
+        var wateryLookingWall = new FakeTerrainTile(TileRules.TerrainKind.Water, destructible: true);
+        Check(TileRules.Resolve(wateryLookingWall, wallName) == TileRules.TerrainKind.Water,
+              "애셋이 물이라는데 이름을 따라 벽이라 함");
+
+        // 3) 애셋이 답하지 않으면 이름으로 간다(아직 옮기지 않은 타일용 뒷길).
+        Check(TileRules.Resolve(null, wallName) == TileRules.TerrainKind.Wall,
+              "뒷길이 벽을 못 알아봄");
+        Check(TileRules.Resolve(null, "S2Wall") == TileRules.TerrainKind.Floor,
+              "목록에 없는 이름이 바닥이 아님 — 뒷길의 한계를 확인");
+        Check(TileRules.Resolve(null, null) == TileRules.TerrainKind.Floor,
+              "타일이 없는 칸이 바닥이 아님");
+
+        // 4) 맵 끝자락 — 물처럼 보이지만 벽이고, 허물 수 없다.
+        var bedrockWater = new FakeTerrainTile(TileRules.TerrainKind.Wall, destructible: false);
+        Check(TileRules.Resolve(bedrockWater, "S1BedrockWater") == TileRules.TerrainKind.Wall,
+              "물 모양 끝자락이 벽이 아님");
+        Check(!bedrockWater.Destructible, "끝자락을 허물 수 있다고 함");
+
+        // 5) 이름 뒷길의 허물기 판정은 그대로 남아 있어야 한다.
+        Check(!TileRules.IsDestructible(bedrockName), "이름으로도 끝자락은 못 허문다");
+        Check(TileRules.IsDestructible(wallName), "보통 벽을 못 허문다고 함");
+
+        Console.WriteLine("  애셋 우선 · 이름 뒷길 · 겉모습과 규칙 분리 검사 완료");
+    }
+
+    /// <summary>ITerrainTile 을 흉내 내는 검사용 타일. Unity 애셋이 필요 없다.</summary>
+    class FakeTerrainTile : ITerrainTile
+    {
+        public FakeTerrainTile(TileRules.TerrainKind terrain, bool destructible)
+        {
+            Terrain = terrain;
+            Destructible = destructible;
+        }
+
+        public TileRules.TerrainKind Terrain { get; }
+        public bool Destructible { get; }
+    }
+
+    // ── 걸려 있는 상태이상과 남은 턴 ────────────────────────────────────────
+    //
+    // 잠에 걸린 채로 몇 턴이 지나야 깨는지는 실제로 걸려 봐야 알 수 있고,
+    // 그동안 조작이 막히므로 눈으로 확인하기가 가장 번거로운 종류다.
+    static void TestConditionTracker()
+    {
+        Console.WriteLine("[상태이상 걸기]");
+
+        var tracker = new ConditionTracker();
+
+        // 1) 처음에는 아무것도 없다.
+        Check(tracker.IsEmpty, "새 판인데 걸려 있는 것이 있음");
+        Check(!tracker.Has("sleep"), "안 걸었는데 걸려 있다고 함");
+
+        // 2) 걸면 그 턴만큼 간다. 5턴이면 다섯 번째 턴이 지날 때 풀린다.
+        tracker.Apply("sleep", 5);
+        Check(tracker.Has("sleep"), "걸었는데 안 걸려 있다고 함");
+
+        for (int turn = 1; turn <= 4; turn++)
+        {
+            var expired = tracker.Tick();
+            Check(expired.Count == 0, $"{turn}턴째에 벌써 풀림");
+            Check(tracker.Has("sleep"), $"{turn}턴째에 이미 사라짐");
+        }
+
+        var done = tracker.Tick();
+        Check(done.Count == 1 && done[0] == "sleep", "다섯째 턴에 안 풀림");
+        Check(!tracker.Has("sleep"), "풀렸는데 남아 있음");
+        Check(tracker.IsEmpty, "다 풀렸는데 비어 있지 않음");
+
+        // 3) 이미 걸린 것에 또 걸면 긴 쪽이 남는다.
+        //    덮어쓰면 5턴짜리 잠이 1턴짜리에 밀려 곧바로 깨고,
+        //    더하면 같은 함정을 여러 번 밟아 영영 못 움직이게 된다.
+        tracker.Apply("sleep", 5);
+        tracker.Apply("sleep", 2);
+        Check(tracker.RemainingTurns("sleep") == 5, $"짧은 것에 밀림 {tracker.RemainingTurns("sleep")}");
+
+        tracker.Apply("sleep", 9);
+        Check(tracker.RemainingTurns("sleep") == 9, $"긴 것이 안 먹힘 {tracker.RemainingTurns("sleep")}");
+
+        // 4) 여럿이 함께 걸리고 각자 제 턴에 풀린다.
+        tracker.Clear();
+        tracker.Apply("sleep", 1);
+        tracker.Apply("disarray", 3);
+
+        var first = tracker.Tick();
+        Check(first.Count == 1 && first[0] == "sleep", "짧은 것만 풀려야 하는데 아님");
+        Check(tracker.Has("disarray"), "긴 것이 함께 풀림");
+
+        tracker.Tick();
+        var second = tracker.Tick();
+        Check(second.Count == 1 && second[0] == "disarray", "긴 것이 제 턴에 안 풀림");
+
+        // 5) 영영 걸린 것은 턴이 지나도 풀리지 않고, 짧은 것에 밀리지도 않는다.
+        tracker.Clear();
+        tracker.Apply("curse", ConditionTracker.Forever);
+        for (int i = 0; i < 50; i++) tracker.Tick();
+        Check(tracker.Has("curse"), "영영 걸린 것이 저절로 풀림");
+
+        tracker.Apply("curse", 3);
+        Check(tracker.Has("curse"), "영영 걸린 것이 짧은 것에 밀림");
+        for (int i = 0; i < 10; i++) tracker.Tick();
+        Check(tracker.Has("curse"), "영영 걸린 것이 결국 풀림");
+
+        // 6) 손으로 풀 수 있다(해독제 같은 것이 쓸 자리).
+        tracker.Remove("curse");
+        Check(!tracker.Has("curse"), "손으로 풀었는데 남아 있음");
+
+        // 7) 이상한 입력에 넘어지지 않는다.
+        tracker.Apply(null, 3);
+        tracker.Apply("", 3);
+        tracker.Apply("음수", -1);
+        Check(tracker.IsEmpty, "빈 id 나 음수 턴이 걸림");
+
+        Console.WriteLine("  남은 턴 · 긴 쪽 남기기 · 여럿 동시 · 영영 · 손으로 풀기 검사 완료");
+    }
+
+    // ── 아이템 표식 ─────────────────────────────────────────────────────────
+    //
+    // 색 태그가 어긋나면 아이템 이름까지 물들거나, 태그 글자가 그대로 보인다.
+    // 눈으로는 "색이 좀 이상한가" 정도로만 보여 놓치기 쉽다.
+    static void TestItemMark()
+    {
+        Console.WriteLine("[아이템 표식]");
+
+        // 1) 표식이 없으면 아무것도 붙지 않는다. 색을 골라 두었어도 마찬가지다.
+        Check(ItemMark.Prefix(MarkShape.None, MarkColor.Red) == "",
+              "표식이 없는데 글자가 붙음");
+
+        // 2) 모양 셋이 각자 다른 글자를 낸다.
+        var glyphs = new HashSet<string>();
+        foreach (MarkShape shape in new[] { MarkShape.Circle, MarkShape.Triangle, MarkShape.Square })
+        {
+            string glyph = ItemMark.GlyphOf(shape);
+            Check(glyph.Length > 0, $"{shape} 의 글자가 비어 있음");
+            Check(glyphs.Add(glyph), $"{shape} 의 글자가 다른 모양과 겹침");
+        }
+
+        // 3) 색 태그가 표식에서 닫힌다. 안 닫으면 뒤따르는 아이템 이름까지 물든다.
+        string prefix = ItemMark.Prefix(MarkShape.Circle, MarkColor.Blue);
+        Check(prefix.StartsWith("<color=") && prefix.EndsWith("</color>"),
+              $"색 태그 모양이 다름: {prefix}");
+        Check(prefix.Contains("●"), $"모양 글자가 빠짐: {prefix}");
+
+        // 태그 안에 든 글자는 모양 하나뿐이어야 한다.
+        int open = prefix.IndexOf('>');
+        int close = prefix.IndexOf("</color>");
+        Check(prefix.Substring(open + 1, close - open - 1) == "●",
+              "색 태그가 모양 말고 다른 것까지 감쌈");
+
+        // 4) 여덟 색이 모두 다른 값을 낸다. 겹치면 눈으로 구별할 수 없다.
+        var hexes = new HashSet<string>();
+        foreach (MarkColor color in ItemMark.Colors)
+        {
+            string hex = ItemMark.HexOf(color);
+            Check(hex.StartsWith("#") && hex.Length == 7, $"{color} 의 색 값이 이상함: {hex}");
+            Check(hexes.Add(hex), $"{color} 의 색이 다른 색과 겹침");
+            Check(ItemMark.NameOf(color).Length > 0, $"{color} 의 이름이 비어 있음");
+        }
+        Check(ItemMark.Colors.Length == 8, $"색이 여덟이 아님 {ItemMark.Colors.Length}");
+
+        // 5) 고를 수 있는 모양에 '지운다'(None)가 들어 있어야 표식을 뗄 수 있다.
+        bool canErase = false;
+        foreach (MarkShape shape in ItemMark.Shapes)
+            if (shape == MarkShape.None) canErase = true;
+        Check(canErase, "표식을 지울 방법이 없음");
+
+        // ── 표식 수첩(종류 단위) ──────────────────────────────────────────
+        var book = new MarkBook();
+        const int apple = 20001;
+        const int seed = 30001;
+
+        // 6) 적어 두기 전에는 아무것도 붙지 않는다.
+        Check(book.IsEmpty, "새 수첩에 적힌 것이 있음");
+        Check(book.PrefixOf(apple) == "", "안 적었는데 표식이 나옴");
+
+        // 7) 번호로 적고 번호로 꺼낸다. 같은 번호면 어느 개체든 같은 표식이다 —
+        //    던지거나 바닥에 둬도 표식이 유지되는 것이 이 성질에서 나온다.
+        book.Set(apple, MarkShape.Triangle, MarkColor.SkyBlue);
+        Check(book.PrefixOf(apple) == ItemMark.Prefix(MarkShape.Triangle, MarkColor.SkyBlue),
+              "적어 둔 표식이 그대로 나오지 않음");
+        Check(book.PrefixOf(seed) == "", "다른 종류에까지 표식이 번짐");
+
+        // 8) 다시 적으면 덮어쓴다.
+        book.Set(apple, MarkShape.Square, MarkColor.Purple);
+        Check(book.TryGet(apple, out MarkShape s2, out MarkColor c2), "덮어쓴 뒤 사라짐");
+        Check(s2 == MarkShape.Square && c2 == MarkColor.Purple, "덮어쓰기가 안 먹음");
+
+        // 9) 모양을 None 으로 적으면 지우는 것이다.
+        book.Set(apple, MarkShape.None, MarkColor.Red);
+        Check(book.PrefixOf(apple) == "", "지웠는데 표식이 남음");
+        Check(book.IsEmpty, "지웠는데 수첩이 비지 않음");
+
+        // 10) 번호 0(정의가 연결되지 않은 아이템)은 받지 않는다.
+        //     받아 두면 서로 다른 물건들이 0 번 하나를 나눠 갖는다.
+        book.Set(0, MarkShape.Circle, MarkColor.Red);
+        Check(book.IsEmpty, "번호 0 에 표식이 붙음");
+
+        // 11) 새 판에서 지워진다.
+        book.Set(apple, MarkShape.Circle, MarkColor.Green);
+        book.Clear();
+        Check(book.IsEmpty, "비웠는데 남아 있음");
+
+        Console.WriteLine("  모양 셋 · 색 여덟 · 태그 닫힘 · 지우기 · 종류 단위 수첩 검사 완료");
+    }
+
+    // ── 가방 정리 차례 ──────────────────────────────────────────────────────
+    //
+    // 차례가 틀려도 "원래 이런가 보다" 하고 넘어가기 쉽다. 특히 문화권 비교를
+    // 쓰면 돌리는 기기에 따라 답이 달라져서, 한 곳에서 확인해도 소용이 없다.
+    static void TestItemOrder()
+    {
+        Console.WriteLine("[가방 정리 차례]");
+
+        // 1) 한글은 가나다 순으로 선다.
+        //    완성형 한글이 초성 → 중성 → 종성 차례로 배열돼 있어서 코드 값
+        //    순서가 곧 사전 순서다. 그 성질에 기대고 있으므로 여기서 못 박는다.
+        var names = new List<string> { "회복씨앗", "사과", "기력회복약", "힘의구슬" };
+        ItemOrder.SortNames(names);
+
+        Check(names[0] == "기력회복약", $"첫째가 다름: {names[0]}");
+        Check(names[1] == "사과", $"둘째가 다름: {names[1]}");
+        Check(names[2] == "회복씨앗", $"셋째가 다름: {names[2]}");
+        Check(names[3] == "힘의구슬", $"넷째가 다름: {names[3]}");
+
+        // 2) 같은 글자로 시작하면 다음 글자로 가른다.
+        var similar = new List<string> { "회복약", "회복씨앗", "회복" };
+        ItemOrder.SortNames(similar);
+        Check(similar[0] == "회복", $"짧은 것이 먼저 오지 않음: {similar[0]}");
+        Check(similar[1] == "회복씨앗" && similar[2] == "회복약",
+              $"같은 앞글자 차례가 다름: {similar[1]}, {similar[2]}");
+
+        // 3) 이름이 없는 것은 뒤로 보낸다.
+        var withEmpty = new List<string> { null, "사과", "", "기력회복약" };
+        ItemOrder.SortNames(withEmpty);
+        Check(withEmpty[0] == "기력회복약" && withEmpty[1] == "사과",
+              "이름 있는 것이 앞으로 오지 않음");
+        Check(string.IsNullOrEmpty(withEmpty[2]) && string.IsNullOrEmpty(withEmpty[3]),
+              "이름 없는 것이 뒤로 가지 않음");
+
+        // 4) 견주기 자체의 성질. 뒤집으면 부호도 뒤집혀야 정렬이 안정된다.
+        Check(ItemOrder.CompareByName("사과", "사과") == 0, "같은 이름인데 다르다고 함");
+        Check(ItemOrder.CompareByName("사과", "회복") < 0, "사과가 회복보다 뒤에 옴");
+        Check(ItemOrder.CompareByName("회복", "사과") > 0, "뒤집었는데 부호가 안 뒤집힘");
+        Check(ItemOrder.CompareByName(null, null) == 0, "둘 다 비었는데 다르다고 함");
+
+        // 5) 빈 목록·null 에 넘어지지 않는다.
+        ItemOrder.SortNames(null);
+        ItemOrder.SortNames(new List<string>());
+
+        Console.WriteLine("  가나다 순 · 같은 앞글자 · 이름 없는 것 뒤로 검사 완료");
+    }
+
+    // ── 가중치로 고르기 ─────────────────────────────────────────────────────
+    //
+    // 실제로 났던 버그를 못 박아 둔다. 프리팹은 여덟 개인데 가중치가 다섯 개
+    // 그대로였고, 반복문이 짧은 쪽에 맞춰 도는 바람에 <b>뒤의 세 개가 영영
+    // 나오지 않았다.</b> 에러가 나지 않아서 "장비가 왜 안 떨어지지" 로만 보였다.
+    static void TestWeightedPick()
+    {
+        Console.WriteLine("[가중치로 고르기]");
+
+        var weights = new List<float> { 3f, 3f, 3f, 2f, 1f, 5f, 5f, 5f };
+
+        // 1) 모든 자리가 실제로 뽑힌다. 뒤쪽이 빠지지 않는지가 핵심이다.
+        Check(Math.Abs(WeightedPick.Total(weights) - 27f) < 0.001f,
+              $"합이 다름 {WeightedPick.Total(weights)}");
+
+        var seen = new HashSet<int>();
+        for (float roll = 0f; roll < 27f; roll += 0.25f)
+            seen.Add(WeightedPick.Choose(weights, roll));
+
+        Check(seen.Count == weights.Count,
+              $"뽑히지 않는 자리가 있음 — {seen.Count}/{weights.Count} 만 나옴");
+
+        for (int i = 0; i < weights.Count; i++)
+            Check(seen.Contains(i), $"{i} 번째가 한 번도 안 나옴");
+
+        // 2) 경계값. 각 구간의 첫 값이 그 자리를 가리켜야 한다.
+        Check(WeightedPick.Choose(weights, 0f) == 0, "맨 앞이 0 번이 아님");
+        Check(WeightedPick.Choose(weights, 2.999f) == 0, "첫 구간 끝이 넘어감");
+        Check(WeightedPick.Choose(weights, 3f) == 1, "둘째 구간이 안 시작됨");
+        Check(WeightedPick.Choose(weights, 26.999f) == 7, "마지막 자리가 안 나옴");
+
+        // 3) 가중치 0 은 건너뛴다. "이건 바닥에 안 나온다" 를 적을 수 있어야 한다.
+        var withZero = new List<float> { 0f, 5f, 0f };
+        Check(WeightedPick.Total(withZero) == 5f, "0 이 합에 섞임");
+        for (float roll = 0f; roll < 5f; roll += 0.5f)
+            Check(WeightedPick.Choose(withZero, roll) == 1, $"0 짜리가 뽑힘 (roll {roll})");
+
+        // 4) 전부 0 이거나 비어 있으면 고를 것이 없다.
+        Check(WeightedPick.Choose(new List<float> { 0f, 0f }, 0f) == WeightedPick.NoChoice,
+              "전부 0 인데 뭔가 뽑힘");
+        Check(WeightedPick.Choose(new List<float>(), 0f) == WeightedPick.NoChoice,
+              "빈 목록에서 뭔가 뽑힘");
+        Check(WeightedPick.Choose(null, 0f) == WeightedPick.NoChoice, "null 에서 뭔가 뽑힘");
+        Check(WeightedPick.Total(null) == 0f, "null 의 합이 0 이 아님");
+
+        // 5) 소수점 오차로 끝을 살짝 넘겨도 마지막 것을 준다.
+        Check(WeightedPick.Choose(weights, 27f) == 7, "끝을 넘겼을 때 아무것도 안 나옴");
+
+        Console.WriteLine("  모든 자리가 뽑히는가 · 경계값 · 가중치 0 · 빈 목록 검사 완료");
     }
 
     class AsciiGrid : IWalkableGrid
@@ -1215,6 +2140,8 @@ static class Program
         GameManager.LookDirection = Vector2.right;
         GameManager.FastForward = true;
         GameManager.InteractionHandled = true;
+        GameManager.Log.Add("지난 판에서 지나간 메시지");
+        GameManager.Marks.Set(20001, MarkShape.Circle, MarkColor.Red);
         InputFocus.Give(InputOwner.BagMenu);
 
         // 흉내가 실제로 상태를 더럽혔는지부터 확인한다.
@@ -1222,6 +2149,8 @@ static class Program
         Check(before.Hp < before.MaxHp, "준비 실패: 체력이 깎이지 않음");
         Check(before.Level > 1, "준비 실패: 레벨이 오르지 않음");
         Check(before.Gold > 0, "준비 실패: 소지금이 늘지 않음");
+        Check(GameManager.Log.Count > 0, "준비 실패: 메시지 이력이 쌓이지 않음");
+        Check(!GameManager.Marks.IsEmpty, "준비 실패: 표식이 적히지 않음");
 
         GameManager.ResetRun();
 
@@ -1241,9 +2170,11 @@ static class Program
         Check(GameManager.LookDirection == Vector2.down, "바라보는 방향이 초기화되지 않음");
         Check(!GameManager.FastForward, "빨리감기가 켜진 채로 남음");
         Check(!GameManager.InteractionHandled, "밟은 것 처리 표시가 남음");
+        Check(GameManager.Log.Count == 0, $"지난 판의 메시지 이력이 남음 {GameManager.Log.Count}줄");
+        Check(GameManager.Marks.IsEmpty, "지난 판의 표식이 남음");
         Check(InputFocus.PlayerHasFocus, "입력 권한이 플레이어에게 돌아오지 않음");
 
-        Console.WriteLine("  죽은 판의 수치 · 가방 · 장비 · 입력 권한 초기화 확인");
+        Console.WriteLine("  죽은 판의 수치 · 가방 · 장비 · 이력 · 표식 · 입력 권한 초기화 확인");
     }
 
     // ── 창이 내용에 맞춰 커지되 HUD 를 가리지 않는가 ────────────────────────

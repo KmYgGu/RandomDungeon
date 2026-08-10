@@ -25,6 +25,12 @@
     <Compile Include="$(ProjectRoot)Assets/RCode/**/*.cs" />
     <!-- 엑셀 임포터의 런타임 조각(ExcelAssetAttribute). Editor 폴더는 뺀다 -->
     <Compile Include="$(ProjectRoot)Assets/ExcelImporter/Runtime/**/*.cs" />
+    <!--
+      2d-extras 의 RuleTile. 게임 코드가 이것을 물려받는다(SiblingRuleTile).
+      Unity 에서는 asmdef 로 나뉜 별도 어셈블리지만, 여기서는 함께 컴파일해야
+      물려받은 쪽의 오류를 잡을 수 있다. Samples~ 는 Unity 가 무시하는 폴더라 뺀다.
+    -->
+    <Compile Include="$(ProjectRoot)Assets/BasicTile/2d-extras-2020.3/Runtime/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>
