@@ -70,14 +70,13 @@ public class Equipment
         }
     }
 
-    /// <summary>이 아이템이 들어갈 슬롯. 장비가 아니면 None.</summary>
-    public EquipmentSlot SlotOf(GameObject item)
-    {
-        if (item == null) return EquipmentSlot.None;
-
-        ItemDescription description = ItemInstance.DescriptionOf(item);
-        return description != null ? description.equipSlot : EquipmentSlot.None;
-    }
+    /// <summary>
+    /// 이 아이템이 들어갈 슬롯. 장비가 아니면 None.
+    ///
+    /// 판정은 ItemInstance 가 한다. 같은 물음에 답하는 곳이 둘이면 한쪽만
+    /// 고쳤을 때 어긋나는데, 어긋나도 에러는 나지 않는다.
+    /// </summary>
+    public EquipmentSlot SlotOf(GameObject item) => ItemInstance.SlotOf(item);
 
     public bool IsEquipped(GameObject item)
     {

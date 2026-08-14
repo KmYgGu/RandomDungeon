@@ -73,8 +73,12 @@ public class Inventory
     /// </summary>
     public int SortByName(GameObject keep)
     {
-        items.Sort((a, b) => ItemOrder.CompareByName(
-            ItemInstance.DisplayNameOf(a), ItemInstance.DisplayNameOf(b)));
+        // 차고 있는 것이 무기 → 방어구 → 장신구 차례로 맨 앞에 서고, 나머지는
+        // 이름순이다(ItemOrder.RankOf). 견주는 이름에 강화 수치를 넣지 않는 것은
+        // 넣으면 나무몽둥이+2 와 나무몽둥이가 서로 떨어져 놓이기 때문이다.
+        items.Sort((a, b) => ItemOrder.Compare(
+            ItemInstance.EquippedSlotOf(a), ItemInstance.DisplayNameOf(a),
+            ItemInstance.EquippedSlotOf(b), ItemInstance.DisplayNameOf(b)));
 
         int moved = keep != null ? items.IndexOf(keep) : -1;
         return moved >= 0 ? moved : 0;
@@ -106,12 +110,11 @@ public class Inventory
         {
             if (i > 0) sb.Append('\n');
             sb.Append(i == selectedIndex ? "> " : "  ");
-            // 손으로 붙인 표식이 있으면 이름 앞에 얹는다.
-            sb.Append(ItemInstance.MarkPrefixOf(items[i]));
 
-            // 오브젝트 이름이 아니라 시트에 적힌 이름을 보여 준다.
-            // 프리팹 이름은 신원도 표시도 아니게 되었다.
-            sb.Append(ItemInstance.DisplayNameOf(items[i]));
+            // 표식(E · ※ · 손으로 붙인 것) + 갈래 색을 입힌 이름.
+            // 오브젝트 이름이 아니라 시트에 적힌 이름이고, 강화 수치가 있으면
+            // 뒤에 함께 나온다("E나무몽둥이+2").
+            sb.Append(ItemInstance.ListNameOf(items[i]));
         }
         return sb.ToString();
     }

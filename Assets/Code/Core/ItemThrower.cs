@@ -115,14 +115,29 @@ public class ItemThrower
         var grid = new TilemapWalkableGrid(tilemap);
         Vector3Int origin = tilemap.WorldToCell(item.transform.position);
 
-        // 살아 있는 적들의 칸을 판정 대상으로 넘긴다.
+        // 살아 있는 적과 <b>동료</b>의 칸을 판정 대상으로 넘긴다.
+        //
+        // 동료를 빼면 던진 것이 동료를 뚫고 지나간다. 아군만 통과하는 규칙은
+        // 편하지만, 회복 아이템을 동료에게 먹일 길도 함께 사라진다.
+        // 맞는 쪽이 누구든 아이템의 효과는 똑같이 받는다(ApplyHit).
         var targets = new List<Vector3Int>();
         var living = new List<Enemy>();
+        var friends = new List<Partner>();
+
         foreach (Enemy enemy in enemies)
         {
             if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
             living.Add(enemy);
+            friends.Add(null);
             targets.Add(tilemap.WorldToCell(enemy.transform.position));
+        }
+
+        foreach (Partner partner in GameManager.instance.partners)
+        {
+            if (partner == null || !partner.gameObject.activeInHierarchy) continue;
+            living.Add(null);
+            friends.Add(partner);
+            targets.Add(tilemap.WorldToCell(partner.transform.position));
         }
 
         RangedShot.Result shot = RangedShot.Trace(
@@ -131,6 +146,9 @@ public class ItemThrower
             new Vector2Int(Mathf.RoundToInt(direction.x), Mathf.RoundToInt(direction.y)),
             stats.ThrowDistance,
             targets);
+
+        // 무언가 날아가는 소리.
+        GameManager.ReportNoise(GridUtil.CellCenter(shot.ImpactCell));
 
         yield return FlyTo(item, origin, shot.ImpactCell);
 
@@ -144,7 +162,10 @@ public class ItemThrower
 
         if (shot.HitTarget)
         {
-            ApplyHit(living[shot.TargetIndex], item, stats);
+            if (friends[shot.TargetIndex] != null)
+                ApplyHitToPartner(friends[shot.TargetIndex], item, stats);
+            else
+                ApplyHit(living[shot.TargetIndex], item, stats);
 
             // 맞은 아이템은 소모된다.
             UnityEngine.Object.Destroy(item);
@@ -195,6 +216,38 @@ public class ItemThrower
     /// (회복 아이템을 던지면 적이 회복되고, 능력치 아이템을 던지면 적이 강해진다.)
     /// 전투·생존과 무관한 아이템은 그냥 맞은 만큼 아프다 — 힘에 비례한 피해.
     /// </summary>
+    /// <summary>
+    /// 맞은 동료에게 아이템의 효과를 적용한다. <b>적에게 던졌을 때와 같은 규칙</b>이다.
+    ///
+    /// 회복 아이템을 던지면 낫고, 그냥 물건이면 아프다. 아군이라고 봐주지 않는
+    /// 이유는, 봐주기 시작하면 "던져도 안전한 방향" 이 생겨 던지기가 판단거리가
+    /// 아니게 되기 때문이다. 회복 아이템을 먹일 수 있는 것도 같은 규칙 덕이다.
+    /// </summary>
+    private static void ApplyHitToPartner(Partner target, GameObject item, PlayerStats stats)
+    {
+        if (GoldPile.IsGold(item))
+        {
+            target.Damaged(GoldPile.DamageOf(GoldPile.AmountOf(item)));
+            return;
+        }
+
+        ThrownEffect effect =
+            ItemEffects.GetThrownEffect(ItemInstance.IdOf(item), out int amount);
+
+        switch (effect)
+        {
+            case ThrownEffect.HealHp:
+                target.HealedBy(amount);
+                break;
+
+            // 능력치 상승은 동료에게 붙일 자리가 아직 없다(수치가 시트에서 온다).
+            // 아무 일도 없는 것보다는 아픈 편이 규칙으로 설명하기 쉽다.
+            default:
+                target.Damaged(stats.ThrowDamage);
+                break;
+        }
+    }
+
     private static void ApplyHit(Enemy target, GameObject item, PlayerStats stats)
     {
         // 돈은 아이템이 아니라 재화다. 액수를 10 으로 나눈 만큼이,

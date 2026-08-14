@@ -26,6 +26,7 @@ public static class ConditionCatalog
     public const string RestraintId = "restraint";
 
     private static List<ConditionDefinition> all;
+    private static Dictionary<string, ConditionDefinition> byId;
 
     /// <summary>
     /// 표에 적힌 모든 상태. 해로운 것부터, 같은 분류 안에서는 시트에 적힌 차례로.
@@ -50,15 +51,21 @@ public static class ConditionCatalog
     /// 표를 고친 뒤 다시 읽게 한다. 에디터에서 손볼 때 쓴다.
     /// 표 전체를 다시 읽으려면 ExcelSheets.Reload() 를 부른다.
     /// </summary>
-    public static void Reload() => all = null;
+    public static void Reload()
+    {
+        all = null;
+        byId = null;
+    }
 
     public static ConditionDefinition Find(string id)
     {
-        foreach (ConditionDefinition definition in All)
-        {
-            if (definition.Id == id) return definition;
-        }
-        return null;
+        // Dictionary 는 null 열쇠를 받지 않는다. 훑어서 찾던 예전에는 그냥
+        // 아무것도 못 찾고 끝났으므로, 여기서 같은 답(null)을 내 준다.
+        if (id == null) return null;
+
+        if (byId == null) byId = SheetIndex.Build(All, d => d.Id);
+
+        return byId.TryGetValue(id, out ConditionDefinition definition) ? definition : null;
     }
 
     /// <summary>해로움 → 이로움 → 중립. 같은 분류 안에서는 시트 차례를 지킨다.</summary>

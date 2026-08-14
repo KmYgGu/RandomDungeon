@@ -45,6 +45,9 @@ public static class ExcelSheets
         TrapCatalog.Reload();
         MonsterCatalog.Reload();
         ItemCatalog.Reload();
+        PartnerCatalog.Reload();
+        TraitCatalog.Reload();
+        PartnerLineCatalog.Reload();
     }
 
     /// <summary>표를 고치는 사람이 무엇이 잘못됐는지 바로 알 수 있게 알린다.</summary>
@@ -67,6 +70,10 @@ public static class TrapCatalog
 {
     private static List<TrapDefinition> all;
 
+    // 찾는 길이 둘이라 색인도 둘이다(SheetIndex 주석). 목록을 버릴 때 함께 버린다.
+    private static Dictionary<int, TrapDefinition> byNumber;
+    private static Dictionary<string, TrapDefinition> byId;
+
     public static IReadOnlyList<TrapDefinition> All
     {
         get
@@ -81,16 +88,19 @@ public static class TrapCatalog
         }
     }
 
-    public static void Reload() => all = null;
+    public static void Reload()
+    {
+        all = null;
+        byNumber = null;
+        byId = null;
+    }
 
     /// <summary>표 번호로 찾는다. 없으면 null.</summary>
     public static TrapDefinition Find(int number)
     {
-        foreach (TrapDefinition definition in All)
-        {
-            if (definition.Number == number) return definition;
-        }
-        return null;
+        if (byNumber == null) byNumber = SheetIndex.Build(All, d => d.Number);
+
+        return byNumber.TryGetValue(number, out TrapDefinition definition) ? definition : null;
     }
 
     /// <summary>코드가 쓰는 이름(dart, gas …)으로 찾는다. 없으면 null.</summary>
@@ -98,11 +108,9 @@ public static class TrapCatalog
     {
         if (string.IsNullOrEmpty(id)) return null;
 
-        foreach (TrapDefinition definition in All)
-        {
-            if (definition.Id == id) return definition;
-        }
-        return null;
+        if (byId == null) byId = SheetIndex.Build(All, d => d.Id);
+
+        return byId.TryGetValue(id, out TrapDefinition definition) ? definition : null;
     }
 }
 
@@ -114,6 +122,7 @@ public static class TrapCatalog
 public static class MonsterCatalog
 {
     private static List<MonsterDefinition> all;
+    private static Dictionary<int, MonsterDefinition> byId;
 
     public static IReadOnlyList<MonsterDefinition> All
     {
@@ -129,16 +138,18 @@ public static class MonsterCatalog
         }
     }
 
-    public static void Reload() => all = null;
+    public static void Reload()
+    {
+        all = null;
+        byId = null;
+    }
 
     /// <summary>표 번호로 찾는다. 없으면 null.</summary>
     public static MonsterDefinition Find(int id)
     {
-        foreach (MonsterDefinition definition in All)
-        {
-            if (definition.Id == id) return definition;
-        }
-        return null;
+        if (byId == null) byId = SheetIndex.Build(All, d => d.Id);
+
+        return byId.TryGetValue(id, out MonsterDefinition definition) ? definition : null;
     }
 }
 
@@ -152,6 +163,10 @@ public static class MonsterCatalog
 public static class ItemCatalog
 {
     private static List<ItemDefinition> all;
+
+    // ItemDescription 의 이름·자리·성능이 전부 프로퍼티라 한 줄을 그리는 데만도
+    // 여기를 여러 번 거친다. 가방 목록이 그것을 아이템 수만큼 되풀이한다.
+    private static Dictionary<int, ItemDefinition> byId;
 
     public static IReadOnlyList<ItemDefinition> All
     {
@@ -167,15 +182,134 @@ public static class ItemCatalog
         }
     }
 
-    public static void Reload() => all = null;
+    public static void Reload()
+    {
+        all = null;
+        byId = null;
+    }
 
     /// <summary>표 번호로 찾는다. 없으면 null.</summary>
     public static ItemDefinition Find(int id)
     {
-        foreach (ItemDefinition definition in All)
+        if (byId == null) byId = SheetIndex.Build(All, d => d.Id);
+
+        return byId.TryGetValue(id, out ItemDefinition definition) ? definition : null;
+    }
+}
+
+/// <summary>특성 표를 읽어 들고 있는 곳. 동료가 번호로 자기 특성을 찾는다.</summary>
+public static class TraitCatalog
+{
+    private static List<TraitDefinition> all;
+    private static Dictionary<int, TraitDefinition> byId;
+
+    public static IReadOnlyList<TraitDefinition> All
+    {
+        get
         {
-            if (definition.Id == id) return definition;
+            if (all != null) return all;
+
+            var problems = new List<string>();
+            all = TraitSheet.FromEntities(ExcelSheets.Data?.trait, problems);
+            ExcelSheets.Report("특성", problems);
+
+            return all;
         }
-        return null;
+    }
+
+    public static void Reload()
+    {
+        all = null;
+        byId = null;
+    }
+
+    /// <summary>특성 번호로 찾는다. 없으면 null.</summary>
+    public static TraitDefinition Find(int id)
+    {
+        if (byId == null) byId = SheetIndex.Build(All, d => d.Id);
+
+        return byId.TryGetValue(id, out TraitDefinition definition) ? definition : null;
+    }
+}
+
+/// <summary>
+/// 동료 표를 읽어 들고 있는 곳.
+///
+/// 표를 옮겨 담은 뒤 <b>특성 표와 맞춰 본다.</b> 번호를 잘못 적으면 그 특성만
+/// 조용히 없는 것이 되는데, 동료는 멀쩡히 따라오고 에러도 나지 않는다.
+/// 맞춰 보는 일을 여기서 하는 것은 두 표가 다 읽힌 뒤라야 할 수 있어서다.
+/// </summary>
+public static class PartnerCatalog
+{
+    private static List<PartnerDefinition> all;
+    private static Dictionary<int, PartnerDefinition> byId;
+
+    public static IReadOnlyList<PartnerDefinition> All
+    {
+        get
+        {
+            if (all != null) return all;
+
+            var problems = new List<string>();
+            all = PartnerSheet.FromEntities(ExcelSheets.Data?.partner, problems);
+            PartnerSheet.ReportUnknownTraits(all, TraitCatalog.All, problems);
+            ExcelSheets.Report("동료", problems);
+
+            return all;
+        }
+    }
+
+    public static void Reload()
+    {
+        all = null;
+        byId = null;
+    }
+
+    /// <summary>표 번호로 찾는다. 없으면 null.</summary>
+    public static PartnerDefinition Find(int id)
+    {
+        if (byId == null) byId = SheetIndex.Build(All, d => d.Id);
+
+        return byId.TryGetValue(id, out PartnerDefinition definition) ? definition : null;
+    }
+}
+
+/// <summary>동료 대사 표를 읽어 들고 있는 곳.</summary>
+public static class PartnerLineCatalog
+{
+    private static List<PartnerLineSet> all;
+    private static Dictionary<int, PartnerLineSet> byId;
+
+    public static IReadOnlyList<PartnerLineSet> All
+    {
+        get
+        {
+            if (all != null) return all;
+
+            var problems = new List<string>();
+            all = PartnerLineSheet.FromEntities(ExcelSheets.Data?.partnerline, problems);
+            ExcelSheets.Report("동료 대사", problems);
+
+            return all;
+        }
+    }
+
+    public static void Reload()
+    {
+        all = null;
+        byId = null;
+    }
+
+    /// <summary>
+    /// 동료 번호로 찾는다. 없으면 null.
+    ///
+    /// 대사가 아직 없는 동료가 있으므로 <b>null 은 잘못이 아니다.</b>
+    /// 부르는 쪽은 말을 하지 않는 것으로 다루면 된다.
+    /// </summary>
+    public static PartnerLineSet Find(int id)
+    {
+        if (byId == null) byId = SheetIndex.Build(All, d => d.Id);
+
+        return byId.TryGetValue(id, out PartnerLineSet lines) ? lines : null;
     }
 }

@@ -59,7 +59,14 @@ public static class TrapIds
     /// <summary>끈적끈적. 가방의 아이템 하나가 손에서 떨어지지 않게 된다.</summary>
     public const string Sticky = "sticky";
 
-    // 아직 만들지 않은 것 — soil(오물) 하나뿐이다.
+    /// <summary>
+    /// 오물. 먹을 수 있는 아이템을 상하게 한다.
+    ///
+    /// <b>아직 동작이 없다</b>(TrapActions 에 줄이 없다). 이름을 여기 적어 두는
+    /// 것은 "무엇이 남았는가" 를 코드에서도 보이게 하기 위해서다 — 시트에만
+    /// 있으면 표를 열어 봐야 알 수 있다.
+    /// </summary>
+    public const string Soil = "soil";
 }
 
 /// <summary>시트 한 줄. 함정 하나의 정의.</summary>

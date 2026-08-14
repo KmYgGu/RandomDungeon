@@ -42,6 +42,15 @@ public class ExcelData : ScriptableObject
     /// 바꾸면 여기도 함께 바꿀 것 — 지금은 시트 쪽을 따라간다.
     /// </summary>
     public List<ItemEntity> item;
+
+    /// <summary>동료 표(시트 "partner").</summary>
+    public List<PartnerEntity> partner;
+
+    /// <summary>특성 표(시트 "trait").</summary>
+    public List<TraitEntity> trait;
+
+    /// <summary>동료 대사 표(시트 "partnerline").</summary>
+    public List<PartnerLineEntity> partnerline;
 }
 
 /// <summary>
@@ -121,10 +130,14 @@ public class MonsterEntity
     public string explanation;
 
     /// <summary>
-    /// 이 적이 치명타를 낼 확률(%). 0 이면 치명타를 내지 않는다.
+    /// 이 적이 치명타를 내는가. <b>1 이면 낸다, 0 이면 안 낸다.</b>
+    ///
+    /// 확률이 아니라 켜고 끄는 값이다. 확률은 코드가 한 곳에서 정한다
+    /// (Player.IncomingCriticalPercent) — 표에 적마다 숫자를 적게 하면 균형을
+    /// 다시 잡을 때 표의 모든 줄을 만져야 하고, 그러다 어긋난 줄이 생긴다.
     ///
     /// 모든 적이 치명타를 내면 맞는 쪽에서는 그냥 피해 폭이 넓은 것으로만 보인다.
-    /// 치명타를 내는 적이 정해져 있어야 "저 녀석은 조심해야 한다" 가 성립한다.
+    /// 내는 적이 정해져 있어야 "저 녀석은 조심해야 한다" 가 성립한다.
     /// </summary>
     public int critical;
 
@@ -167,4 +180,96 @@ public class ItemEntity
 
     /// <summary>바닥에 나올 등급(A+ · A · B- …). 뒤 글자일수록 드물다.</summary>
     public string droprate;
+}
+
+/// <summary>동료 표의 한 줄.</summary>
+[Serializable]
+public class PartnerEntity
+{
+    public int id;
+    public string name;
+    public int hp;
+    public int atk;
+    public int def;
+
+    /// <summary>이 동료가 들고 다닐 수 있는 가방 칸 수.</summary>
+    public int bag;
+
+    /// <summary>
+    /// 특성 번호. trait 시트의 id 를 가리킨다. 0(빈칸)이면 그 자리는 없는 것이다.
+    ///
+    /// 여섯 칸을 열로 펼쳐 둔 것은 엑셀에서 채우기 쉬워서다. 코드는
+    /// PartnerDefinition.TraitIds 하나의 목록으로 받아 쓴다.
+    /// <b>열을 늘리면 여기와 PartnerSheet.CollectTraits 를 함께 늘려야 한다</b> —
+    /// 실제로 skill6 을 더했을 때 여기가 없어서 그 칸이 통째로 버려지고 있었다.
+    /// </summary>
+    public int skill1;
+    public int skill2;
+    public int skill3;
+    public int skill4;
+    public int skill5;
+    public int skill6;
+
+    /// <summary>성별("남성" · "여성").</summary>
+    public string gender;
+
+    /// <summary>종족("인간" · "엘프" · "언데드" · "요정").</summary>
+    public string category;
+
+    /// <summary>도감·소개에 띄울 글.</summary>
+    public string explanation;
+
+    /// <summary>
+    /// 사람이 읽는 메모. 지금은 앞으로 만들 고유 능력이 적혀 있다.
+    /// 다른 표와 마찬가지로 <b>코드가 이 글자를 보고 갈래를 나누지 않는다.</b>
+    /// 고유 능력을 만들 때는 코드가 아는 목록을 고르는 열을 따로 둔다.
+    /// </summary>
+    public string note;
+}
+
+/// <summary>특성 표의 한 줄.</summary>
+[Serializable]
+public class TraitEntity
+{
+    /// <summary>특성 번호(101~). partner 시트의 skill 열이 이 번호를 가리킨다.</summary>
+    public int id;
+
+    public string name;
+
+    /// <summary>무엇을 하는 특성인지 사람에게 보여 주는 글.</summary>
+    public string explanation;
+}
+
+/// <summary>
+/// 동료 대사 표의 한 줄.
+///
+/// 체력 구간마다 대사가 하나씩이다. 열 이름의 숫자가 그 구간의 <b>아래 끝</b>이다
+/// (PartnerLineSheet.LineForPercent 가 뜻을 정한다).
+/// </summary>
+[Serializable]
+public class PartnerLineEntity
+{
+    /// <summary>partner 시트의 id 와 같은 번호.</summary>
+    public int id;
+
+    /// <summary>표를 눈으로 맞춰 보기 위한 이름. 코드는 번호로만 잇는다.</summary>
+    public string name;
+
+    /// <summary>처음 만났을 때.</summary>
+    public string meet;
+
+    public string hp100;
+    public string hp80;
+    public string hp60;
+    public string hp30;
+    public string hp10;
+    public string hp1;
+
+    /// <summary>고유 행동을 시작할 때.</summary>
+    public string action;
+
+    /// <summary>고유 행동의 결과별 대사.</summary>
+    public string actioncase1;
+    public string actioncase2;
+    public string actioncase3;
 }

@@ -36,6 +36,14 @@ public class RandomDung : MonoBehaviour
     public GameObject[] trapPrefabs;
     public GameObject stairsPrefab;
 
+    /// <summary>
+    /// 동료 프리팹. 비워 두면 동료가 나오지 않는다.
+    ///
+    /// 지금은 첫 층에서 이 하나가 플레이어 옆에 붙는다(DungeonPopulator.PlacePartners).
+    /// 만나서 들이는 방식이 생기면 여러 종류를 담는 배열로 바뀔 자리다.
+    /// </summary>
+    public GameObject partnerPrefab;
+
     [Header("타일맵")]
     public Tilemap floorTilemap;
     public Tilemap Minimap;
@@ -153,7 +161,10 @@ public class RandomDung : MonoBehaviour
         if (GameManager.instance.Player == null)
             GameManager.instance.Player = populator.PlacePlayer(layout);
 
-        // 10. 함정.
+        // 10. 동료. 플레이어가 선 뒤라야 그 옆자리를 고를 수 있다.
+        populator.PlacePartners(GameManager.instance.Player, partnerPrefab);
+
+        // 11. 함정.
         populator.PlaceTraps(layout, minDistanceBetweenTrapsAndStairs, minDistanceBetweenTrapsAndItems);
     }
 

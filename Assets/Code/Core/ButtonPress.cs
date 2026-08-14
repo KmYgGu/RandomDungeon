@@ -40,8 +40,19 @@ public class ButtonPress
     /// </summary>
     public float HeldSeconds { get; private set; }
 
+    /// <summary>
+    /// 지금 눌려 있고, <b>아직 다 쓰이지 않았는가.</b>
+    ///
+    /// Held 와 다른 점은 Spend 를 거쳤는지다. "누르고 있는 동안 계속 먹는" 동작
+    /// (달리기)에서, 한 번 쓰고 나면 손을 뗐다 다시 눌러야 하는 경우에 쓴다.
+    /// </summary>
+    public bool HeldAvailable => Held && !spent;
+
     /// <summary>이번 눌림이 아직 아무 일에도 쓰이지 않았다.</summary>
     private bool unused;
+
+    /// <summary>이번 눌림을 끝까지 다 썼다. 손을 떼기 전에는 다시 쓰이지 않는다.</summary>
+    private bool spent;
 
     public void Update(bool down, bool held, bool up, float deltaTime = 0f)
     {
@@ -52,6 +63,7 @@ public class ButtonPress
         if (down)
         {
             unused = true;
+            spent = false;
             HeldSeconds = 0f;
         }
         else if (held)
@@ -63,8 +75,22 @@ public class ButtonPress
         {
             if (unused) Tapped = true;
             unused = false;
+            spent = false;
             HeldSeconds = 0f;
         }
+    }
+
+    /// <summary>
+    /// 이번 눌림을 <b>끝까지 다 썼다.</b> 손을 떼기 전에는 HeldAvailable 이 false 다.
+    ///
+    /// Consume 과 나눠 둔 이유가 있다. Consume 은 "이 눌림이 조준으로 새지 않게"
+    /// 표시만 하는 것이라 누르고 있는 동안 달리기는 계속 먹는다. 자리 바꾸기처럼
+    /// <b>한 번 하고 나면 손을 떼야 하는</b> 동작은 그것만으로는 표현할 수 없다.
+    /// </summary>
+    public void Spend()
+    {
+        Consume();
+        spent = true;
     }
 
     /// <summary>

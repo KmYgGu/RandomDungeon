@@ -24,7 +24,7 @@ public enum GameMessage
     GoldPickedUp,
     /// <summary>아이템을 주워 가방에 넣음. name = 아이템명</summary>
     ItemPickedUp,
-    /// <summary>가방이 가득 참.</summary>
+    /// <summary>가방이 가득 차 줍지 못했다. name = 아이템명</summary>
     BagFull,
     /// <summary>줍지 않고 아이템 위에 올라섰다. name = 아이템명</summary>
     SteppedOnItem,
@@ -56,6 +56,30 @@ public enum GameMessage
     Unequipped,
     /// <summary>적 처치. name = 적 이름, amount = 획득 경험치</summary>
     EnemyDefeated,
+
+    /// <summary>동료가 적을 때렸다. name = 동료 이름, amount = 피해량</summary>
+    PartnerHitEnemy,
+    /// <summary>동료가 맞았다. name = 동료 이름, amount = 피해량</summary>
+    PartnerDamaged,
+    /// <summary>동료가 쓰러졌다. name = 동료 이름</summary>
+    PartnerFell,
+    /// <summary>계단에서 동료를 두고 내려왔다. name = 동료 이름</summary>
+    PartnerLeftBehind,
+    /// <summary>동행을 승낙받았다. name = 동료 이름</summary>
+    PartnerJoined,
+    /// <summary>동행을 거절했다(플레이어가 아니오를 골랐다). name = 동료 이름</summary>
+    PartnerDeclined,
+    /// <summary>
+    /// 동료가 적을 쓰러뜨렸다. 경험치는 동료만 받는다.
+    /// name = 동료 이름, secondName = 적 이름, amount = 동료가 받은 경험치
+    /// </summary>
+    PartnerDefeatedEnemy,
+    /// <summary>동료의 레벨이 올랐다. name = 동료 이름</summary>
+    PartnerLeveledUp,
+    /// <summary>동료에게 말을 걸었다. 다음 레벨까지 남은 경험치. amount = 남은 양</summary>
+    PartnerExpRemaining,
+    /// <summary>동료가 회복 아이템을 맞고 회복했다. name = 동료 이름</summary>
+    PartnerHealed,
 
     /// <summary>포만도가 이미 최대였음 → 위장이 넓어짐.</summary>
     AteFoodStomachGrew,
@@ -151,8 +175,10 @@ public static class MessageCatalog
                 return $"{amount}골드를 획득했습니다.";
             case GameMessage.ItemPickedUp:
                 return $"{name}을(를) 주워서 가방안에 넣었다.";
+            // 무엇을 못 주웠는지 말해 준다. 예전에는 "더 이상 넣을 수 없다" 뿐이라,
+            // 여러 개가 겹쳐 놓인 칸에서는 어느 것이 남았는지 알 수 없었다.
             case GameMessage.BagFull:
-                return "가방이 가득차 더 이상 넣을 수 없다.";
+                return $"가방이 가득차 {name}을(를) 줍지 못했다.";
             case GameMessage.SteppedOnItem:
                 return $"{name} 위에 올라탔다.";
             case GameMessage.TrapTriggered:
@@ -183,6 +209,27 @@ public static class MessageCatalog
                 return $"{name}을(를) 벗었다.";
             case GameMessage.EnemyDefeated:
                 return $"{name}를 쓰러뜨렸다.\n{amount}경험치를 얻었다.";
+
+            case GameMessage.PartnerHitEnemy:
+                return $"{name}의 공격! 적에게 {amount}데미지!";
+            case GameMessage.PartnerDamaged:
+                return $"{name}에게 {amount}데미지!";
+            case GameMessage.PartnerFell:
+                return $"{name}이(가) 쓰러졌다!";
+            case GameMessage.PartnerLeftBehind:
+                return $"{name}을(를) 두고 내려왔다.";
+            case GameMessage.PartnerJoined:
+                return $"{name}이(가) 동료가 되었다!";
+            case GameMessage.PartnerDeclined:
+                return $"{name}와(과) 헤어졌다.";
+            case GameMessage.PartnerDefeatedEnemy:
+                return $"{name}이(가) {secondName}를 쓰러뜨렸다.\n{name}이(가) {amount}경험치를 얻었다.";
+            case GameMessage.PartnerLeveledUp:
+                return $"{name}의 레벨이 올랐다!";
+            case GameMessage.PartnerExpRemaining:
+                return $"다음 레벨까지 {amount} 경험치.";
+            case GameMessage.PartnerHealed:
+                return $"{name}의 체력이 회복됐다.";
 
             case GameMessage.AteFoodStomachGrew:
                 return $"{name}를 먹었다.\n위장이 넓어졌다.";

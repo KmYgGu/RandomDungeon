@@ -165,4 +165,13 @@ public class DungeonTilePainter
 
     /// <summary>타일 칸의 중심 월드 좌표.</summary>
     public Vector3 CellCenter(Vector3Int cellPosition) => GridUtil.CellCenter(floorTilemap, cellPosition);
+
+    /// <summary>
+    /// 그 칸에 걸어 들어갈 수 있는가. 지형 판정은 TileRules 가 한다.
+    ///
+    /// 배치할 자리를 고를 때 쓴다. "칠해 둔 바닥인가" 가 아니라 "들어갈 수 있는가"
+    /// 를 묻는 이유는, 물처럼 바닥이면서도 못 들어가는 칸이 있기 때문이다.
+    /// </summary>
+    public bool IsWalkable(Vector3Int cellPosition)
+        => TileRules.CanEnter(floorTilemap, CellCenter(cellPosition), false);
 }

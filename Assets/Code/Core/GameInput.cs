@@ -35,6 +35,14 @@ public static class GameInput
     /// <summary>B 가 눌려 있는가. 달리기 판정에 쓴다.</summary>
     public static bool AssistHeld { get { EnsurePolled(); return assist.Held; } }
 
+    /// <summary>
+    /// B 가 눌려 있고, 이번 눌림이 아직 다 쓰이지 않았는가.
+    ///
+    /// 자리 바꾸기가 이 눌림을 다 써 버리면(SpendAssist) 손을 뗐다 다시 눌러야
+    /// 달리기가 시작된다. 안 그러면 바꾸자마자 그대로 내달린다.
+    /// </summary>
+    public static bool AssistHeldAvailable { get { EnsurePolled(); return assist.HeldAvailable; } }
+
     /// <summary>B 를 아무 일에도 쓰지 않은 채 뗀 순간. 조준 토글이다.</summary>
     public static bool AssistTapped { get { EnsurePolled(); return assist.Tapped; } }
 
@@ -128,6 +136,13 @@ public static class GameInput
     }
 
     /// <summary>이번 B 입력을 이미 처리했다고 알린다.</summary>
+    /// <summary>B 의 이번 눌림을 끝까지 썼다. 손을 떼기 전에는 다시 쓰이지 않는다.</summary>
+    public static void SpendAssist()
+    {
+        EnsurePolled();
+        assist.Spend();
+    }
+
     public static void ConsumeAssist()
     {
         EnsurePolled();

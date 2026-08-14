@@ -40,8 +40,8 @@ public class MonsterDescription : ScriptableObject
     public int Defense => Definition?.Defense ?? 0;
     public int Exp => Definition?.Exp ?? 0;
 
-    /// <summary>치명타를 낼 확률(%). 0 이면 내지 않는다.</summary>
-    public int CriticalPercent => Definition?.CriticalPercent ?? 0;
+    /// <summary>치명타를 내는 적인가. 확률은 Player 가 정한다.</summary>
+    public bool DealsCritical => Definition?.DealsCritical ?? false;
 
     /// <summary>출현 빈도. 표에 없으면 '보통' 으로 본다.</summary>
     public SpawnRate Rate => Definition?.Rate ?? SpawnRate.Medium;

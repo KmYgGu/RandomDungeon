@@ -249,4 +249,27 @@ public static class TileRules
         return !IsImpassable(tilemap, start + new Vector2(direction.x, 0f))
             && !IsImpassable(tilemap, start + new Vector2(0f, direction.y));
     }
+
+    /// <summary>
+    /// 근접 공격이 닿는가.
+    ///
+    /// 근접은 몸이 닿아야 하므로 이동과 같은 제약을 받는다. 벽 너머는 때릴 수 없고,
+    /// 벽 두 개가 맞물린 대각선 틈으로도 손이 들어가지 않는다.
+    /// <b>던진 아이템 같은 원거리는 이 제약을 받지 않는다</b>(RangedShot 참고).
+    ///
+    /// ── 왜 여기 있나 ──────────────────────────────────────────────────
+    /// 원래 Player 안에만 있었다. 동료가 생기면서 같은 규칙이 필요해졌는데,
+    /// 그때 동료 쪽에 따로 판정을 만들었더니 규칙이 둘이 되었다. 하나만 고치면
+    /// 플레이어와 동료가 다르게 싸우게 되고, 그건 화면에서 설명할 수가 없다.
+    ///
+    /// 원거리 무기를 든 동료가 생기면 이 규칙을 <b>안 쓰면 된다</b> — 예외를
+    /// 파는 것이 아니라 무기에 맞는 규칙(RangedShot)을 쓰는 것이다.
+    /// </summary>
+    public static bool CanReachWithMelee(Tilemap tilemap, Vector3 origin, Vector2 direction)
+    {
+        if (IsImpassable(tilemap, origin + (Vector3)direction)) return false;
+
+        bool diagonal = direction.x != 0f && direction.y != 0f;
+        return !diagonal || CanMoveDiagonally(tilemap, origin, direction);
+    }
 }

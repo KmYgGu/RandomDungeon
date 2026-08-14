@@ -84,6 +84,19 @@ public class ItemInstance : MonoBehaviour
     }
 
     /// <summary>
+    /// 강화 수치까지 붙인 이름("나무몽둥이+2"). 강화가 0 이면 이름 그대로다.
+    ///
+    /// <b>화면에 물건 이름을 내보이는 곳은 전부 이것을 쓴다</b> — 가방 목록,
+    /// 발밑 화면, 주웠을 때의 알림. 같은 이름의 장비라도 개체마다 값이 다른데,
+    /// 어느 한 곳만 이름을 그대로 쓰면 거기서는 +2 와 +0 이 구별되지 않는다.
+    ///
+    /// 정리(<see cref="Inventory.SortByName"/>)는 여기가 아니라 DisplayNameOf 로
+    /// 센다. 강화 수치까지 넣어 견주면 나무몽둥이+2 와 나무몽둥이가 떨어져 놓인다.
+    /// </summary>
+    public static string FullNameOf(GameObject item)
+        => DisplayNameOf(item) + ItemEnhancement.Suffix(EnhancementOf(item));
+
+    /// <summary>
     /// 이름 앞에 붙일 표식 글자. 적어 둔 것이 없으면 빈 문자열.
     ///
     /// 표식은 이 물건 하나가 아니라 <b>종류</b>에 붙어 있으므로(MarkBook),
@@ -91,11 +104,50 @@ public class ItemInstance : MonoBehaviour
     /// </summary>
     public static string MarkPrefixOf(GameObject item)
     {
-        // 끈적끈적이 앞에 온다. 게임이 붙인 사실이 내가 적어 둔 메모보다 먼저다.
+        // 장착 중 · 끈적끈적이 앞에 온다. 게임이 붙인 사실이 내가 적어 둔 메모보다 먼저다.
+        // 셋이 함께 붙을 수 있다("E※●나무몽둥이+2").
+        string equipped = IsEquipped(item) ? ItemMark.EquippedPrefix() : string.Empty;
         string sticky = IsSticky(item) ? ItemMark.StickyPrefix() : string.Empty;
 
-        return sticky + GameManager.Marks.PrefixOf(IdOf(item));
+        return equipped + sticky + GameManager.Marks.PrefixOf(IdOf(item));
     }
+
+    /// <summary>
+    /// 화면 목록에 그릴 이름. <b>표식 + 갈래 색을 입힌 이름</b>이다.
+    ///
+    /// 색이 붙으므로 <b>메시지에는 쓰지 않는다</b>(그쪽은 FullNameOf). 알림 창까지
+    /// 색을 입히면 문구 안에서 물건 이름만 튀어 읽는 흐름이 끊긴다.
+    /// </summary>
+    public static string ListNameOf(GameObject item)
+        => MarkPrefixOf(item) + ItemMark.SlotColored(FullNameOf(item), SlotOf(item));
+
+    /// <summary>
+    /// 이 물건이 들어가는 자리. 장비가 아니면 None.
+    ///
+    /// 차고 있는지와는 상관없다 — 가방 안의 여벌 무기도 Weapon 이다.
+    /// </summary>
+    public static EquipmentSlot SlotOf(GameObject item)
+    {
+        ItemDescription description = DescriptionOf(item);
+        return description != null ? description.equipSlot : EquipmentSlot.None;
+    }
+
+    /// <summary>
+    /// <b>지금 차고 있는</b> 자리. 차고 있지 않으면 None.
+    ///
+    /// 가방을 정리할 때 차고 있는 것을 앞으로 보내는 데 쓴다(ItemOrder.RankOf).
+    /// </summary>
+    public static EquipmentSlot EquippedSlotOf(GameObject item)
+        => IsEquipped(item) ? SlotOf(item) : EquipmentSlot.None;
+
+    /// <summary>
+    /// 지금 몸에 걸치고 있는 것인가.
+    ///
+    /// 바닥의 물건은 걸칠 수 없으므로 언제나 아니고, 그래서 발밑 화면에는
+    /// 이 표시가 나오지 않는다. 판이 시작되기 전에는 장비 자체가 없다.
+    /// </summary>
+    private static bool IsEquipped(GameObject item)
+        => item != null && GameManager.Gear != null && GameManager.Gear.IsEquipped(item);
 
     /// <summary>끈적끈적한가. 컴포넌트가 없으면 아니다.</summary>
     public static bool IsSticky(GameObject item)

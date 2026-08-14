@@ -59,6 +59,8 @@ public class DungeonPopulator
         this.monsterPrefab = monsterPrefab;
         this.stairsPrefab = stairsPrefab;
         this.playerPrefab = playerPrefab;
+
+        WarnAboutUnspawnableItems();
     }
 
     public Vector3Int StairsPosition => stairsPosition;
@@ -113,8 +115,30 @@ public class DungeonPopulator
             GameObject prefab = PickWeightedItem();
             if (prefab == null) continue;
 
-            SpawnOnGround(prefab, spot);
+            EnhanceIfEquipment(SpawnOnGround(prefab, spot));
         }
+    }
+
+    /// <summary>
+    /// 새로 놓은 장비에 강화 수치를 굴려 붙인다. 장비가 아니면 아무 일도 없다.
+    ///
+    /// 프리팹이 아니라 <b>방금 만든 개체</b>에 적는다. 프리팹에 적으면 그 종류가
+    /// 전부 같은 값이 되고, 에디터에서는 프리팹 애셋 자체가 바뀌어 버린다.
+    ///
+    /// 굴리는 것은 여기서 하고 규칙은 ItemEnhancement 가 안다. 그래야 Unity 를
+    /// 켜지 않고도 규칙 쪽을 확인할 수 있다.
+    /// </summary>
+    private static void EnhanceIfEquipment(GameObject item)
+    {
+        if (item == null) return;
+
+        ItemInstance instance = item.GetComponent<ItemInstance>();
+        if (instance == null || instance.description == null) return;
+
+        // 어느 수치가 얼마나 흔한지는 ItemEnhancement 가 정한다(낮을수록 흔하다).
+        // 여기서는 0~1 사이의 수 하나만 굴려 넘긴다.
+        instance.enhancement = ItemEnhancement.OnSpawn(
+            instance.description.Definition, UnityEngine.Random.value);
     }
 
     private void SpawnMonsters(RoomInfo room, int count, int stage)
@@ -161,6 +185,88 @@ public class DungeonPopulator
         }
 
         enemy.SetStats(definition.Hp, definition.Attack, definition.Defense);
+    }
+
+    /// <summary>
+    /// 명단에 있는 동료를 플레이어 옆에 만든다. 층마다 다시 불린다.
+    ///
+    /// ── 처음에는 남이다 ───────────────────────────────────────────────
+    /// 놓기만 하고 <b>명단에는 올리지 않는다.</b> 말을 걸어 승낙을 받아야 동료가
+    /// 된다(GameManager.PromptJoin). 그전까지는 함께 싸우지도, 따라오지도 않고
+    /// 적도 건드리지 않는다.
+    ///
+    /// ── 지금은 시작하자마자 옆에 하나 선다 ────────────────────────────
+    /// 원래는 던전에서 확률로 만나는 것이지만, 지금은 <b>따라오기·자리 바꾸기·
+    /// 전투·계단을 자주 확인해야 해서</b> 첫 층부터 옆에 세워 둔다. 확률 출현으로
+    /// 바꿀 때는 아래 "명단이 비었으면 하나 세운다" 를 그 규칙으로 갈면 된다.
+    ///
+    /// <b>이미 데리고 있으면 새로 세우지 않는다.</b> 층마다 하나씩 늘어나면
+    /// 금세 줄줄이 달고 다니게 되어 자리 바꾸기도 통행도 확인할 수 없다.
+    /// </summary>
+    public void PlacePartners(GameObject player, GameObject partnerPrefab)
+    {
+        if (player == null || partnerPrefab == null) return;
+
+        // 데리고 있는 동료들을 다시 세운다(층을 넘어온 것들).
+        foreach (PartnerMember member in GameManager.Party.Members)
+            SpawnPartnerBeside(player, partnerPrefab, member.Id);
+
+        // 아무도 안 데리고 있으면 남 하나를 세워 둔다.
+        if (GameManager.Party.IsEmpty)
+            SpawnPartnerBeside(player, partnerPrefab, 0);
+    }
+
+    /// <summary>
+    /// 플레이어 옆에 동료 하나를 세운다.
+    /// </summary>
+    /// <param name="expectedId">
+    /// 명단에서 온 번호. 0 이면 아직 남이라 맞춰 볼 것이 없다.
+    /// </param>
+    private void SpawnPartnerBeside(GameObject player, GameObject partnerPrefab, int expectedId)
+    {
+        Vector3Int spot = FindSpotBeside(player.transform.position);
+
+        GameObject spawned = UnityEngine.Object.Instantiate(
+            partnerPrefab, painter.CellCenter(spot), Quaternion.identity);
+
+        occupiedByCreatures.Add(spot);
+
+        // 명단에 적힌 것이 신원이다. 프리팹이 다른 동료를 가리키고 있으면
+        // 체력이 딴 사람 것이 되는데, 에러는 나지 않는다.
+        Partner partner = spawned.GetComponent<Partner>();
+        int actualId = partner != null && partner.description != null ? partner.description.id : 0;
+
+        if (expectedId != 0 && actualId != expectedId)
+        {
+            Debug.LogWarning(
+                $"동료 프리팹({actualId})과 명단({expectedId})이 다릅니다. " +
+                "프리팹의 Description 을 확인하세요.", spawned);
+        }
+    }
+
+    /// <summary>
+    /// 플레이어 곁의 빈 칸. 못 찾으면 플레이어 칸을 그대로 돌려준다.
+    ///
+    /// 겹쳐 놓아도 첫 턴에 동료가 알아서 비켜서지만, 그 한 턴 동안 플레이어와
+    /// 겹쳐 보이는 것이 버그로 읽힌다. 여덟 이웃을 먼저 살펴본다.
+    /// </summary>
+    private Vector3Int FindSpotBeside(Vector3 playerWorld)
+    {
+        var center = new Vector3Int(
+            Mathf.FloorToInt(playerWorld.x), Mathf.FloorToInt(playerWorld.y), 0);
+
+        foreach (Vector2 direction in GridUtil.EightDirections)
+        {
+            var candidate = new Vector3Int(
+                center.x + (int)direction.x, center.y + (int)direction.y, 0);
+
+            if (IsNear(occupiedByCreatures, candidate, MinDistanceBetweenObjects)) continue;
+            if (!painter.IsWalkable(candidate)) continue;
+
+            return candidate;
+        }
+
+        return center;
     }
 
     /// <summary>플레이어가 아직 없으면(첫 층이면) 한 명 만들어 놓는다.</summary>
@@ -248,10 +354,10 @@ public class DungeonPopulator
         return false;
     }
 
-    private void SpawnOnGround(GameObject prefab, Vector3Int cell)
+    private GameObject SpawnOnGround(GameObject prefab, Vector3Int cell)
     {
         ground.Add(GridUtil.CellCenter(cell));
-        UnityEngine.Object.Instantiate(prefab, painter.CellCenter(cell), Quaternion.identity);
+        return UnityEngine.Object.Instantiate(prefab, painter.CellCenter(cell), Quaternion.identity);
     }
 
     /// <summary>
@@ -286,10 +392,39 @@ public class DungeonPopulator
     /// <summary>이 프리팹이 바닥에 나올 가중치. 정의를 못 찾으면 0.</summary>
     private static float DropRateOf(GameObject prefab)
     {
+        // 돈은 item 시트의 한 줄이 아니다(GoldPile.DropGrade 주석). 정의 애셋이
+        // 없으므로 여기서 갈라 주지 않으면 가중치가 0 이 되어 영영 나오지 않는다.
+        if (GoldPile.IsGold(prefab))
+            return ItemSheet.ParseDropRate(GoldPile.DropGrade, 0);
+
         ItemDescription description = ItemInstance.DescriptionOf(prefab);
         if (description == null) return 0f;
 
         ItemDefinition definition = description.Definition;
         return definition != null ? definition.DropRate : 0f;
+    }
+
+    /// <summary>
+    /// 바닥에 <b>절대 나오지 않는</b> 아이템 프리팹을 알린다.
+    ///
+    /// 가중치가 0 이면 그 프리팹은 영영 뽑히지 않는데 에러는 나지 않는다.
+    /// 실제로 동전이 이렇게 사라졌다. 다른 아이템이 멀쩡히 나오면 아래
+    /// "가중치가 모두 0" 검사에는 걸리지 않으므로, 프리팹마다 따로 본다.
+    ///
+    /// 층을 만들 때마다 한 번씩 뜬다. 고치기 전까지 계속 눈에 띄어야 한다 —
+    /// 조용해지는 순간 다시 몇 판을 돌고 나서야 알아채게 된다.
+    /// </summary>
+    private void WarnAboutUnspawnableItems()
+    {
+        if (itemPrefabs == null) return;
+
+        foreach (GameObject prefab in itemPrefabs)
+        {
+            if (prefab == null || DropRateOf(prefab) > 0f) continue;
+
+            Debug.LogWarning(
+                $"{prefab.name}: 바닥에 나오지 않습니다(가중치 0). " +
+                "item 시트의 droprate 와 프리팹의 정의 연결을 확인하세요.", prefab);
+        }
     }
 }

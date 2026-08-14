@@ -56,6 +56,26 @@ public class PanelView
     private readonly TextMeshProUGUI detailPrice;
     private readonly TextMeshProUGUI detailDescription;
 
+    // ── 같은 것을 다시 그리지 않기 ─────────────────────────────────────────
+    //
+    // 메뉴 화면들은 코루틴 안에서 매 프레임 ShowList 를 부른다(입력을 기다리는
+    // 동안 계속 도는 구조라 그렇다). 글자가 같아도 아래 두 가지가 매번 돌았다.
+    //
+    //   GetPreferredValues - 글자가 차지할 크기를 <b>처음부터 다시 계산</b>한다.
+    //                        TMP 는 이 계산을 캐시하지 않는다.
+    //   Place              - 창의 앵커·크기·자리를 다시 대입한다.
+    //
+    // (listLabel.text 대입만은 TMP 가 같은 문자열이면 일찍 빠져나가 준다.)
+    //
+    // 그래서 <b>무엇을 그렸는지</b> 기억해 두고 같은 요청이면 아무 일도 하지 않는다.
+    // 값을 견주는 방식이라 어딘가에서 "다시 그려 달라" 고 알려 주는 것을 빠뜨려
+    // 화면이 낡은 채로 남는 일이 없다.
+    private string shownListText;
+    private Vector2 shownListCenter;
+
+    /// <summary>목록 모드로 떠 있는가. 다른 모드로 바뀌면 기억한 것을 버린다.</summary>
+    private bool showingList;
+
     public PanelView(
         GameObject panel,
         TextMeshProUGUI listLabel,
@@ -97,6 +117,12 @@ public class PanelView
     {
         if (panel == null) return;
 
+        // 이미 같은 목록이 같은 자리에 떠 있으면 손댈 것이 없다.
+        // panel.activeSelf 까지 보는 것은 밖에서 창을 감춘 경우를 놓치지 않기 위해서다.
+        if (showingList && panel.activeSelf
+            && shownListText == text && shownListCenter == preferredCenter)
+            return;
+
         SetDetailActive(false);
         if (listLabel != null) listLabel.gameObject.SetActive(true);
 
@@ -108,6 +134,10 @@ public class PanelView
         // TMP 가 계산해 주는 '이 글자가 차지할 크기' 를 쓴다.
         // 줄 수를 직접 세어 곱하는 것보다 정확하다(줄간격·글꼴이 바뀌어도 따라온다).
         Place(listLabel.GetPreferredValues(text), ListPadding, preferredCenter);
+
+        showingList = true;
+        shownListText = text;
+        shownListCenter = preferredCenter;
     }
 
     /// <summary>
@@ -124,6 +154,8 @@ public class PanelView
         if (listLabel != null) listLabel.gameObject.SetActive(false);
         SetDetailActive(true);
         panel.SetActive(true);
+
+        showingList = false;   // 목록 모드를 떠났다
 
         if (item != null)
         {
@@ -158,6 +190,10 @@ public class PanelView
         panel.SetActive(true);
         if (listLabel == null) return;
 
+        // 같은 글자라도 목록 모드와 자리 잡는 방법이 다르다(여기는 영역을 통째로
+        // 쓴다). 기억한 것을 버려야 다음 ShowList 가 자기 크기로 다시 맞춘다.
+        showingList = false;
+
         listLabel.text = text;
         Place(FillAvailable, Vector2.zero, CenterAnchor);
     }
@@ -188,6 +224,8 @@ public class PanelView
     public void Hide()
     {
         if (panel != null) panel.SetActive(false);
+
+        showingList = false;
     }
 
     private void Place(Vector2 contentSize, Vector2 padding, Vector2 preferredCenter)

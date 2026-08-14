@@ -35,12 +35,15 @@ public class MonsterDefinition
     public int Exp;
 
     /// <summary>
-    /// 이 적이 치명타를 낼 확률(%). 0 이면 내지 않는다.
+    /// 이 적이 치명타를 내는가.
+    ///
+    /// <b>확률은 여기 없다.</b> 얼마나 자주 나는지는 코드가 한 곳에서 정한다
+    /// (Player.IncomingCriticalPercent). 표는 "내는 적인가" 만 정한다.
     ///
     /// 모든 적이 낸다면 맞는 쪽에서는 피해 폭이 넓은 것으로만 보인다.
     /// 내는 적이 정해져 있어야 "저 녀석은 조심해야 한다" 가 성립한다.
     /// </summary>
-    public int CriticalPercent;
+    public bool DealsCritical;
 
     /// <summary>출현 빈도.</summary>
     public SpawnRate Rate;
@@ -97,7 +100,7 @@ public static class MonsterSheet
                 Attack = row.atk,
                 Defense = row.def,
                 Exp = row.exp,
-                CriticalPercent = ClampPercent(row.critical, row.id, problems),
+                DealsCritical = ParseCritical(row.critical, row.id, problems),
                 Rate = ParseRate(row.rate, row.id, problems),
                 Category = Clean(row.category),
                 Description = Clean(row.explanation),
@@ -109,18 +112,23 @@ public static class MonsterSheet
     }
 
     /// <summary>
-    /// 확률을 0~100 안으로 되돌린다. 벗어나 있으면 알려 준다.
+    /// 치명타 칸을 읽는다. <b>1 이면 낸다, 0(또는 빈칸)이면 안 낸다.</b>
     ///
-    /// 음수는 "치명타 없음" 과 같고, 100 을 넘는 값은 "늘 치명타" 와 같아서
-    /// 그대로 두어도 게임은 돌아간다. 하지만 표를 채운 사람은 그 값이 먹는 줄
-    /// 알게 되므로 잘라 내고 알린다.
+    /// 한때 이 열이 확률(%)이었다. 켜고 끄는 값으로 바꾸면서 위험한 구간이
+    /// 생겼다 — 예전 표의 감각으로 <c>1</c> 이라고 적으면 "1% 확률" 이 아니라
+    /// "낸다" 가 되고, <c>20</c> 이라고 적으면 20% 가 아니라 그냥 <b>모르는 값</b>이다.
+    /// 둘 다 에러가 나지 않으므로, 1·0 이 아닌 값은 반드시 알려 준다.
     /// </summary>
-    public static int ClampPercent(int percent, int id, List<string> problems = null)
+    public static bool ParseCritical(int cell, int id, List<string> problems = null)
     {
-        if (percent < 0 || percent > 100)
-            problems?.Add($"{id} 번의 치명타 확률 {percent} 가 0~100 밖입니다.");
+        if (cell == 0) return false;
+        if (cell == 1) return true;
 
-        return Mathf.Clamp(percent, 0, 100);
+        problems?.Add(
+            $"{id} 번의 critical 이 {cell} 입니다. 이 열은 확률이 아니라 1(낸다)/0(안 낸다) 입니다. " +
+            "'낸다' 로 봅니다.");
+
+        return true;
     }
 
     /// <summary>칸 끝에 남은 탭·공백·줄바꿈을 털어 낸다.</summary>

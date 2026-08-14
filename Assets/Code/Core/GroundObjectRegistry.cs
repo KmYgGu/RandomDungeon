@@ -13,6 +13,20 @@ public class GroundObjectRegistry
     // 같은 칸에 두 번 등록되지 않도록 비교 오차를 둔다.
     private const float SamePositionThreshold = 0.1f;
 
+    /// <summary>
+    /// 위 오차의 제곱. 견줄 때는 이쪽을 쓴다.
+    ///
+    /// Vector3.Distance 는 제곱근을 뽑는데, "가까운가" 를 묻는 데에는 제곱근이
+    /// 필요 없다 — 제곱근은 커지는 순서를 바꾸지 않으므로 양쪽을 제곱한 채로
+    /// 견줘도 답이 같다. 목록을 통째로 훑는 자리라(Add 가 매번 Contains 를 부른다)
+    /// 비교 한 번마다 제곱근이 하나씩 붙어 있었다.
+    ///
+    /// 실제로 들어오는 자리는 칸 중심이라 서로 같거나 한 칸(1.0) 넘게 떨어져
+    /// 있고, 경계인 0.1 근처에 놓이는 일이 없다. 부동소수 반올림이 답을 가를
+    /// 여지가 없는 이유다.
+    /// </summary>
+    private const float SamePositionThresholdSqr = SamePositionThreshold * SamePositionThreshold;
+
     private readonly List<Vector3> positions = new List<Vector3>();
 
     /// <summary>인스펙터 표시나 디버그용 읽기 전용 뷰.</summary>
@@ -32,7 +46,7 @@ public class GroundObjectRegistry
     {
         foreach (Vector3 p in positions)
         {
-            if (Vector3.Distance(p, position) < SamePositionThreshold)
+            if ((p - position).sqrMagnitude < SamePositionThresholdSqr)
                 return true;
         }
         return false;
@@ -42,7 +56,7 @@ public class GroundObjectRegistry
     {
         for (int i = 0; i < positions.Count; i++)
         {
-            if (Vector3.Distance(positions[i], position) < SamePositionThreshold)
+            if ((positions[i] - position).sqrMagnitude < SamePositionThresholdSqr)
             {
                 positions.RemoveAt(i);
                 return true;

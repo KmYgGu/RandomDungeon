@@ -36,8 +36,37 @@ public class HudView
         this.goldText = goldText;
     }
 
+    // ── 값이 바뀌었을 때만 그린다 ──────────────────────────────────────────
+    //
+    // Refresh 는 GameManager.Update 에서 매 프레임 불린다. 그런데 턴제라 이
+    // 수치들은 <b>턴이 끝날 때만</b> 바뀐다.
+    //
+    // TMP 는 같은 문자열을 대입하면 일찍 빠져나가 주지만, 그 비교에 닿기 전에
+    // 보간 문자열($"HP {..}/{..}")이 이미 만들어진다. 초당 240 개가 그대로
+    // 쓰레기가 된다. 그래서 <b>문자열을 만들기 전에</b> 값으로 먼저 거른다.
+    //
+    // 처음 한 번은 반드시 그려야 하므로 있을 수 없는 값으로 시작한다.
+    private int shownStage = int.MinValue;
+    private int shownLevel = int.MinValue;
+    private int shownGold = int.MinValue;
+    private float shownHp = float.NaN;
+    private float shownMaxHp = float.NaN;
+
     public void Refresh(PlayerStats stats, int stage)
     {
+        if (stage == shownStage
+            && stats.Level == shownLevel
+            && stats.Gold == shownGold
+            && stats.Hp == shownHp
+            && stats.MaxHp == shownMaxHp)
+            return;
+
+        shownStage = stage;
+        shownLevel = stats.Level;
+        shownGold = stats.Gold;
+        shownHp = stats.Hp;
+        shownMaxHp = stats.MaxHp;
+
         RefreshHealthBar(stats);
 
         if (stageText != null) stageText.text = $"B {stage}F";

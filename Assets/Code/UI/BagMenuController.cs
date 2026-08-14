@@ -109,7 +109,9 @@ public class BagMenuController
             // 돈에는 표식을 붙일 수 없다(종류가 하나뿐이고 액수가 곧 이름이다).
             return GroundIsGold
                 ? GoldPile.DisplayName(GoldPile.AmountOf(groundItem))
-                : ItemInstance.MarkPrefixOf(groundItem) + ItemInstance.DisplayNameOf(groundItem);
+                // 가방 화면과 좌우로 오가므로 같은 모습으로 그린다. 한쪽만 색이
+                // 없으면 같은 물건이 화면을 옮길 때마다 달라 보인다.
+                : ItemInstance.ListNameOf(groundItem);
         }
     }
 
@@ -201,12 +203,27 @@ public class BagMenuController
     /// </summary>
     private IEnumerator Browse()
     {
+        // 목록 글자는 <b>바뀔 때만</b> 만든다.
+        //
+        // 이 반복문은 입력을 기다리느라 매 프레임 돈다. 그때마다 목록을 새로
+        // 만들면 아이템 하나마다 정의 조회와 색 태그 조립이 되풀이되는데,
+        // 가방이 열려 있는 동안 턴은 흐르지 않으므로 내용이 바뀔 일이 없다.
+        // 상태창이 "메뉴가 열려 있는 동안 한 번만 그린다" 고 한 것과 같은 이유다.
+        //
+        // 바뀌는 경우는 둘뿐이다 — 커서를 옮겼을 때와 정리했을 때.
+        // (창이 같은 글자를 다시 받으면 PanelView 가 또 한 번 걸러 준다.)
+        bool listChanged = true;
+
         while (true)
         {
             if (swapping)
                 messageBox.ShowPersistent(MessageCatalog.Format(GameMessage.SwapWithWhat));
 
-            panel.ShowList(inventory.BuildListText(selectedItem, EmptyBagText));
+            if (listChanged)
+            {
+                panel.ShowList(inventory.BuildListText(selectedItem, EmptyBagText));
+                listChanged = false;
+            }
 
             // 이 상태에 막 들어온 프레임의 입력은 무시한다.
             // (가방을 연 그 키가 곧바로 가방을 닫아 버리는 것을 막는다)
@@ -221,6 +238,7 @@ public class BagMenuController
                 GameInput.ConsumeAction();
                 GameInput.ConsumeAssist();
                 SortBag();
+                listChanged = true;      // 차례가 통째로 바뀌었다
                 continue;
             }
 
@@ -247,7 +265,10 @@ public class BagMenuController
 
             int step = GameInput.MenuStep;
             if (step != 0)
+            {
                 selectedItem = inventory.WrapIndex(selectedItem + step);
+                listChanged = true;      // 커서가 붙는 줄이 달라졌다
+            }
 
             if (GameInput.ActionPressed) yield break;
         }
@@ -494,9 +515,8 @@ public class BagMenuController
 
     // ── 마킹 ───────────────────────────────────────────────────────────────
 
-    /// <summary>메뉴 맨 윗줄에 얹을 이름. 표식이 있으면 함께 보여 준다.</summary>
-    private static string TitleOf(GameObject item)
-        => ItemInstance.MarkPrefixOf(item) + ItemInstance.DisplayNameOf(item);
+    /// <summary>메뉴 맨 윗줄에 얹을 이름. 목록에 보이던 것과 같은 모습이어야 한다.</summary>
+    private static string TitleOf(GameObject item) => ItemInstance.ListNameOf(item);
 
     /// <summary>
     /// 표식을 고른다. 색을 먼저, 그다음 모양.

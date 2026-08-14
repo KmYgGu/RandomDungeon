@@ -42,4 +42,42 @@ public static class ItemOrder
     {
         names?.Sort(CompareByName);
     }
+
+    /// <summary>
+    /// 정리했을 때 앞에 서는 차례. 작을수록 앞이다.
+    ///
+    /// <b>지금 차고 있는 것</b>이 맨 앞에 무기 → 방어구 → 장신구 차례로 서고,
+    /// 나머지는 전부 그 뒤에서 이름순으로 선다. <b>차고 있지 않은 장비는
+    /// 나머지에 섞인다</b> — 몸에 걸친 것이 무엇인지가 가장 자주 확인하는
+    /// 것이고, 가방 안의 여벌 장비는 이름으로 찾는 편이 빠르다.
+    ///
+    /// 차례를 EquipmentSlot 의 값(1·2·3)에 기대지 않고 여기서 다시 적는다.
+    /// 열거형에 새 자리를 끼워 넣거나 값을 바꾸는 순간 정리 차례가 조용히
+    /// 따라 바뀌면, 왜 바뀌었는지 알아낼 방법이 없다.
+    /// </summary>
+    /// <param name="equippedSlot">차고 있는 자리. 차고 있지 않으면 None.</param>
+    public static int RankOf(EquipmentSlot equippedSlot)
+    {
+        switch (equippedSlot)
+        {
+            case EquipmentSlot.Weapon: return 0;
+            case EquipmentSlot.Armor: return 1;
+            case EquipmentSlot.Accessory: return 2;
+            default: return 3;   // 차고 있지 않은 것 전부
+        }
+    }
+
+    /// <summary>
+    /// 가방을 정리할 때 둘을 견준다. 차고 있는 것이 먼저고, 그다음이 이름이다.
+    /// </summary>
+    public static int Compare(
+        EquipmentSlot equippedA, string nameA, EquipmentSlot equippedB, string nameB)
+    {
+        int rankA = RankOf(equippedA);
+        int rankB = RankOf(equippedB);
+
+        if (rankA != rankB) return rankA - rankB;
+
+        return CompareByName(nameA, nameB);
+    }
 }

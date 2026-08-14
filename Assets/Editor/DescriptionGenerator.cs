@@ -16,6 +16,7 @@ public static class DescriptionGenerator
     private const string TrapFolder = "Assets/Prefab/Traps/trapData";
     private const string MonsterFolder = "Assets/Prefab/Monsters/monsterData";
     private const string ItemFolder = "Assets/Prefab/Items/itemData";
+    private const string PartnerFolder = "Assets/Prefab/partner/partnerData";
 
     [MenuItem("Tools/시트에서 아이템 정의 만들기")]
     public static void GenerateItems()
@@ -81,6 +82,28 @@ public static class DescriptionGenerator
         }
 
         Finish("적", made, MonsterCatalog.All.Count);
+    }
+
+    [MenuItem("Tools/시트에서 동료 정의 만들기")]
+    public static void GeneratePartners()
+    {
+        ExcelSheets.Reload();
+
+        var made = new List<string>();
+        EnsureFolder(PartnerFolder);
+
+        foreach (PartnerDefinition definition in PartnerCatalog.All)
+        {
+            string path = $"{PartnerFolder}/{FileNameOf(definition.Name, definition.Id)}.asset";
+            if (File.Exists(path)) continue;
+
+            var asset = ScriptableObject.CreateInstance<PartnerDescription>();
+            asset.id = definition.Id;
+            AssetDatabase.CreateAsset(asset, path);
+            made.Add(definition.Name);
+        }
+
+        Finish("동료", made, PartnerCatalog.All.Count);
     }
 
     /// <summary>이름이 비어 있으면 번호로 짓는다. 파일 이름에 못 쓰는 글자는 뺀다.</summary>

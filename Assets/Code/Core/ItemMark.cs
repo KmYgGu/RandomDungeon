@@ -131,6 +131,70 @@ public static class ItemMark
     /// <summary>끈적끈적한 아이템 이름 앞에 붙일 글자.</summary>
     public static string StickyPrefix() => $"<color={StickyHex}>{StickyGlyph}</color>";
 
+    // ── 장착 중 ────────────────────────────────────────────────────────────
+    //
+    // 끈적끈적과 같은 갈래다 — 사람이 고르는 표식이 아니라 <b>게임이 붙이는 사실</b>이라
+    // 색을 고를 수 없다. 그래서 색도 같은 무채색을 쓴다.
+    //
+    // 장비는 가방에서 빠지지 않고 "차고 있다" 는 표시만 붙는다(Equipment 주석).
+    // 그 표시가 목록에 없으면 같은 이름의 장비가 둘일 때 어느 쪽을 차고 있는지
+    // 알 길이 없고, 차고 있는 것을 던지거나 놓으려다 되돌리게 된다.
+
+    /// <summary>장착 중인 장비에 붙는 글자.</summary>
+    public const string EquippedGlyph = "E";
+
+    /// <summary>장착 표시의 색. 끈적끈적과 같은 이유로 마킹의 여덟 색과 겹치지 않는 흰색.</summary>
+    public const string EquippedHex = "#FFFFFF";
+
+    /// <summary>장착 중인 장비 이름 앞에 붙일 글자.</summary>
+    public static string EquippedPrefix() => $"<color={EquippedHex}>{EquippedGlyph}</color>";
+
+    // ── 장비 자리별 글자 색 ────────────────────────────────────────────────
+    //
+    // 가방에서 <b>장비를 한눈에 가려내기</b> 위한 것이다. 이름만 늘어놓으면
+    // 어느 것이 무기이고 어느 것이 소모품인지 한 줄씩 읽어야 알 수 있다.
+    //
+    // 표식과 달리 <b>사람이 고르지 않는다.</b> 시트의 equipslot 이 곧 색이라,
+    // 새 장비를 표에 더하면 색은 저절로 따라온다.
+    //
+    // 색은 마킹과 같은 이유로 원색보다 조금 밝게 잡았다 — 어두운 창 위에
+    // 얹히므로 원색이면 배경에 묻힌다.
+
+    /// <summary>무기 이름의 색. 노랑.</summary>
+    public const string WeaponHex = "#FFE14A";
+
+    /// <summary>방어구 이름의 색. 주황.</summary>
+    public const string ArmorHex = "#FF9A3C";
+
+    /// <summary>장신구 이름의 색. 진한 분홍.</summary>
+    public const string AccessoryHex = "#FF4FA3";
+
+    /// <summary>그 자리의 이름에 입힐 색. 장비가 아니면 빈 문자열.</summary>
+    public static string SlotHexOf(EquipmentSlot slot)
+    {
+        switch (slot)
+        {
+            case EquipmentSlot.Weapon: return WeaponHex;
+            case EquipmentSlot.Armor: return ArmorHex;
+            case EquipmentSlot.Accessory: return AccessoryHex;
+            default: return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// 장비면 자리에 맞는 색을 입히고, 장비가 아니면 이름을 그대로 둔다.
+    ///
+    /// 태그가 <b>이름만</b> 감싼다. 앞에 붙는 표식(E · ※ · ●)은 저마다 제 색으로
+    /// 이미 닫혀 있으므로, 이름을 감싸는 이 태그가 그것들까지 물들이지 않는다.
+    /// </summary>
+    public static string SlotColored(string name, EquipmentSlot slot)
+    {
+        string hex = SlotHexOf(slot);
+        if (hex.Length == 0 || string.IsNullOrEmpty(name)) return name;
+
+        return $"<color={hex}>{name}</color>";
+    }
+
     /// <summary>
     /// 아이템 이름 앞에 붙일 글자. 표식이 없으면 빈 문자열.
     ///
