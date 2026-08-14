@@ -24,8 +24,19 @@ using TMPro;
 ///   BagMenuController  - 가방 화면의 흐름
 ///   ItemThrower        - 던진 아이템의 비행과 착지
 ///
+///   ItemCommands       - 가방 화면 · 발밑 명령 · 줍기 · 교환 · 던지기 · 장착
+///   ForcedMoves        - 구멍 · 워프 · 날리기와 그 결말
+///   TurnLoop           - 플레이어가 행동한 뒤의 한 턴(동료 → 적 → 만복도)
+///   StatusScreen       - 상태창과 그 메뉴
+///
 /// 협력 객체들은 MonoBehaviour 가 아니라 순수 C# 클래스다. 그래서 씬에
 /// 컴포넌트를 새로 붙이거나 Inspector 참조를 다시 연결할 필요가 없다.
+///
+/// ── 여기 남아 있는 것 ─────────────────────────────────────────────
+/// 남은 것은 <b>"언제 누구를 부를지"</b> 와, 여러 곳이 함께 쓰는 판 단위 상태
+/// (Stats · Bag · Gear · Party · Conditions …)다. 상태이상을 거는 일도 여기
+/// 남겼는데, 함정 · 아이템 · 능력이 모두 부르는 공용 동작이라 어느 한 파일의
+/// 것이라고 하기 어렵기 때문이다. 규칙 자체는 이미 밖에 있다(ConditionRules).
 /// </summary>
 public class GameManager : MonoBehaviour
 {
@@ -84,6 +95,15 @@ public class GameManager : MonoBehaviour
     /// <summary>몇 턴마다 체력이 자연 회복되는가.</summary>
     private const int RecoveryTickInterval = 10;
 
+    /// <summary>
+    /// 동료가 한 번에 아무는 양.
+    ///
+    /// 플레이어는 힘에 비례해 회복하지만(PlayerStats.NaturalRecoveryAmount)
+    /// 동료에게는 힘이 없다. 고정으로 두되, 동료의 체력이 플레이어보다 훨씬
+    /// 적으므로(10~25) 같은 1 이라도 비율로는 더 크다.
+    /// </summary>
+    private const int PartnerNaturalRecovery = 1;
+
     /// <summary>층 진입 안내 문구가 사라지기까지의 시간.</summary>
     private const float LevelTextHoldTime = 1f;
     private const float LevelTextFadeTime = 0.5f;
@@ -141,8 +161,22 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public static MarkBook Marks { get; } = new MarkBook();
 
+    /// <summary>
+    /// 방금 어디서 소리가 났는가. 싸움·던지기·함정이 적고, 플레이어를 놓친
+    /// 동료가 듣는다(앞으로 몇몇 적도 듣는다).
+    ///
+    /// <b>층 단위</b>다. 지난 층의 소리를 따라가면 갈 수 없는 자리를 향해 걷는다.
+    /// StartNextStage 와 ResetRun 이 비운다.
+    /// </summary>
+    public static NoiseBoard Noise { get; } = new NoiseBoard();
+
+    /// <summary>소리가 났다고 적는다. 칸 좌표로 적는다(월드 좌표를 받아 바꾼다).</summary>
+    public static void ReportNoise(Vector3 where)
+        => Noise.Report(
+            new Vector3Int(Mathf.FloorToInt(where.x), Mathf.FloorToInt(where.y), 0), TurnCount);
+
     public static int Stage { get; private set; }
-    public static int TurnCount { get; private set; }
+    public static int TurnCount { get; internal set; }
 
     /// <summary>바닥 타일맵. RandomDung 이 층을 만들 때 채워 넣는다.</summary>
     public static Tilemap FloorTilemap { get; set; }
@@ -182,19 +216,44 @@ public class GameManager : MonoBehaviour
     ///
     /// 함정만이 아니라 지팡이·능력으로 옮길 때도 같은 표시를 쓴다.
     /// </summary>
-    public static bool ForcedMoveRunning { get; private set; }
+    public static bool ForcedMoveRunning { get; internal set; }
     // ──────────────────────────────────────────────────────────────────────
 
     public bool playersTurn = true;
     public List<Enemy> enemies = new List<Enemy>();
+
+    /// <summary>이 층에 서 있는 동료 오브젝트들. 층이 바뀌면 새로 만들어진다.</summary>
+    public List<Partner> partners = new List<Partner>();
+
+    /// <summary>
+    /// 데리고 다니는 동료 명단. <b>층을 넘어가도 남는 것은 이쪽</b>이고,
+    /// 오브젝트(partners)는 층마다 이 명단대로 다시 만들어진다.
+    /// 판이 끝나면 ResetRun 이 비운다.
+    /// </summary>
+    public static PartnerRoster Party { get; private set; } = new PartnerRoster();
     public List<Vector2> enemyPositions = new List<Vector2>();
     public Vector2 PlayerPosition;
 
     // 협력 객체들. Awake 에서 Inspector 참조를 넘겨 만든다.
     private HudView hud;
     private MessageBoxView messageBox;
+
+    /// <summary>턴 흐름이 "중요한 알림을 읽는 중인가" 를 물을 때 쓴다.</summary>
+    internal MessageBoxView MessageBox => messageBox;
     private StatusView statusView;
     private PanelView menuPanel;
+
+    /// <summary>가방·아이템 관련 일 전부. 400 줄이라 여기서 떼어 냈다.</summary>
+    private ItemCommands items;
+
+    /// <summary>구멍·워프·날리기와 그 결말. 250 줄이라 여기서 떼어 냈다.</summary>
+    private ForcedMoves forcedMoves;
+
+    /// <summary>상태창과 그 메뉴. 메뉴가 늘어날 자리라 떼어 냈다.</summary>
+    private StatusScreen statusScreen;
+
+    /// <summary>한 턴의 흐름. 220 줄이라 여기서 떼어 냈다.</summary>
+    private TurnLoop turnLoop;
     private StarvingTint starvingTint;
 
     /// <summary>게임 오버 처리를 이미 시작했는가. 죽음은 여러 곳에서 알려 온다.</summary>
@@ -257,6 +316,18 @@ public class GameManager : MonoBehaviour
         // 굶는 동안 화면의 모든 글자에 테를 두른다.
         starvingTint = new StarvingTint(UiCanvas);
 
+        // 가방·아이템. 창을 둘 받아 두고 나머지는 GameManager 를 통해 쓴다.
+        items = new ItemCommands(this, messageBox, menuPanel);
+
+        // 구멍·워프·날리기.
+        forcedMoves = new ForcedMoves(this);
+
+        // 상태창과 그 메뉴. statusView 가 만들어진 뒤라야 한다.
+        statusScreen = new StatusScreen(this, messageBox, menuPanel, statusView);
+
+        // 한 턴의 흐름.
+        turnLoop = new TurnLoop(this);
+
 
         // 장비는 씬을 넘어가도 유지되므로 한 번만 만든다.
         if (Gear == null) Gear = new Equipment();
@@ -264,126 +335,12 @@ public class GameManager : MonoBehaviour
         statusView.SetVisible(false);
         menuPanel.Hide();
     }
-
     /// <summary>
-    /// 캐릭터 상태창을 연다. 열려 있는 동안에는 조작이 잠기고,
-    /// 아무 키(A 또는 B)나 상태창 키를 다시 누르면 닫힌다.
-    ///
-    /// 가방과 달리 턴을 쓰지 않는다. 그냥 들여다보는 화면이다.
+    /// 캐릭터 상태창을 연다. 실제 흐름은 StatusScreen 이 갖고 있다 —
+    /// 메뉴가 늘어날 자리라 갓 오브젝트 밖으로 뺐다.
     /// </summary>
-    public void OpenStatus()
-    {
-        InputFocus.Give(InputOwner.Status);
-        StartCoroutine(ShowStatusUntilClosed());
-    }
+    public void OpenStatus() => statusScreen.OpenStatus();
 
-    private IEnumerator ShowStatusUntilClosed()
-    {
-        statusView.SetVisible(true);
-        statusView.Render(Stats, Gear, TurnCount);
-
-        // 메뉴가 열려 있는 동안 턴은 흐르지 않으므로 수치는 한 번만 그리면 된다.
-        StatusMenu? chosen = null;
-        yield return new StatusMenuController(messageBox).Run(result => chosen = result);
-
-        statusView.SetVisible(false);
-        menuPanel.Hide();
-        messageBox.Hide();
-        InputFocus.ReturnToPlayer();
-
-        if (chosen.HasValue)
-            HandleStatusMenu(chosen.Value);
-    }
-
-    /// <summary>
-    /// 상태창 메뉴에서 고른 것을 처리한다.
-    ///
-    /// 여섯 항목 모두 앞으로 만들 기능이라, 지금은 자리만 잡아 두었다.
-    /// 기능이 생기면 해당 case 한 줄만 바꾸면 된다.
-    /// </summary>
-    private void HandleStatusMenu(StatusMenu menu)
-    {
-        switch (menu)
-        {
-            case StatusMenu.UnderFoot:
-                UseUnderFoot();
-                break;
-
-            case StatusMenu.Condition:
-                StartCoroutine(ShowConditions());
-                break;
-
-            case StatusMenu.Log:
-                StartCoroutine(ShowLog());
-                break;
-
-            case StatusMenu.Encyclopedia:
-            case StatusMenu.Records:
-            case StatusMenu.Abort:
-                messageBox.Show($"{StatusMenuCatalog.LabelOf(menu)}은(는) 아직 준비되지 않았다.");
-                break;
-        }
-    }
-
-    /// <summary>
-    /// 여러 줄을 큰 판에 늘어놓고 상하 방향키로 넘겨 보는 화면.
-    /// 상태와 로그가 같은 흐름을 쓴다.
-    ///
-    /// 판에 몇 줄이 들어가는지는 글꼴과 화면 비율에 달렸으므로 매 프레임 다시
-    /// 물어본다 — 창 크기가 바뀌어도 스크롤이 어긋나지 않는다.
-    /// 반대로 줄 수는 열 때 한 번만 받는다. 이 화면이 떠 있는 동안에는 턴이
-    /// 흐르지 않아 내용이 늘거나 줄지 않기 때문이다.
-    /// </summary>
-    /// <param name="lineCount">늘어놓을 줄 수. 스크롤이 넘어갈 범위를 정한다.</param>
-    /// <param name="buildText">(시작 줄, 담을 줄 수) → 판에 채울 글자.</param>
-    /// <param name="startOffset">처음 보여 줄 자리. int.MaxValue 면 맨 끝에서 시작한다.</param>
-    private IEnumerator ShowScrollingPage(
-        int lineCount, Func<int, int, string> buildText, int startOffset)
-    {
-        InputFocus.Give(InputOwner.Prompt);
-
-        int offset = startOffset;
-
-        while (true)
-        {
-            int capacity = menuPanel.PageLineCapacity;
-            offset = PageScroll.ClampOffset(offset, lineCount, capacity);
-
-            menuPanel.ShowPage(buildText(offset, capacity));
-
-            // 이 화면을 연 그 키가 곧바로 닫아 버리지 않도록 한 프레임 넘긴다.
-            yield return null;
-
-            if (GameInput.AssistPressed || GameInput.StatusPressed) break;
-
-            offset += GameInput.MenuStep;
-        }
-
-        menuPanel.Hide();
-        InputFocus.ReturnToPlayer();
-    }
-
-    /// <summary>상태 화면. 지금 걸려 있는 것들을 위에서부터 늘어놓는다.</summary>
-    private IEnumerator ShowConditions()
-    {
-        List<ConditionDefinition> active = ConditionReport.Active(Stats, Conditions);
-
-        return ShowScrollingPage(
-            active.Count,
-            (offset, capacity) => ConditionReport.BuildText(active, offset, capacity),
-            startOffset: 0);
-    }
-
-    /// <summary>
-    /// 로그 화면. 메시지 창을 지나간 글을 오래된 것부터 늘어놓는다.
-    ///
-    /// 맨 끝에서 시작한다. 이 화면을 여는 이유는 대개 "방금 무엇에 맞았지" 라서,
-    /// 열자마자 직전 몇 줄이 보여야 한다. 위로 올릴수록 과거로 간다.
-    /// </summary>
-    private IEnumerator ShowLog()
-    {
-        return ShowScrollingPage(Log.Count, Log.BuildText, startOffset: int.MaxValue);
-    }
 
     private void Update()
     {
@@ -427,6 +384,11 @@ public class GameManager : MonoBehaviour
         // 장비는 아이템 목록이 있어야 만들 수 있다. 곧 BuildCollaborators 가 만든다.
         Gear = null;
 
+        // 동료 명단. 비우지 않으면 죽은 판의 동료가 다음 판까지 따라온다 —
+        // 에디터에서는 도메인 리로드가 가려 주고 빌드에서만 드러난다.
+        Party.Clear();
+        Noise.Clear();
+
         // 새 객체로 갈아 끼우지 않고 비운다 — 위 Log 의 설명 참고.
         Log.Clear();
         Conditions.Clear();
@@ -460,8 +422,10 @@ public class GameManager : MonoBehaviour
         FastForward = false;
 
         enemies.Clear();
+        partners.Clear();          // 오브젝트는 씬과 함께 사라졌다. 명단(Party)은 남는다.
         enemyPositions.Clear();
         Ground.Clear();
+        Noise.Clear();      // 지난 층의 소리를 새 층에서 따라가면 안 된다.
         messageBox.Hide();
 
         LevelTextMeshPro.text = $"던전의 지하 {Stage}층";
@@ -643,268 +607,44 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public void ApplyTrapEffect(string trapId, TrapAnimation animation = TrapAnimation.None)
     {
-        // 몸짓을 먼저 보여 준다.
-        //
-        // 워프만 예외다. 워프의 '빙글' 은 위로 올라가는 동안 도는 것이라
-        // 그 연출 안에 이미 들어 있고, 여기서 또 돌리면 두 번 돈다.
-        if (trapId != TrapIds.Warp) StartCoroutine(PlayTrapAnimation(animation));
+        // 어느 함정이 무엇을 하는지는 TrapActions 의 표가 안다.
+        // 여기 있던 switch 는 함정을 하나 더할 때마다 이 파일을 열게 만들었다.
+        // 함정이 터지는 소리.
+        if (PlayerComponent != null) ReportNoise(PlayerComponent.transform.position);
 
-        switch (trapId)
-        {
-            case TrapIds.Hole:
-                StartCoroutine(FallThroughHole());
-                break;
+        if (TrapActions.PlaysAnimationFirst(trapId))
+            StartCoroutine(PlayTrapAnimation(animation));
 
-            case TrapIds.Warp:
-                StartCoroutine(WarpPlayer());
-                break;
-
-            case TrapIds.Blow:
-                StartCoroutine(BlowPlayer(-LookDirection, TrapEffects.BlowDistance));
-                break;
-
-            case TrapIds.Dart:
-                LoseStrength(TrapEffects.DartStrengthLoss);
-                break;
-
-            // 아래 셋은 거는 상태만 다르다. 지속 턴도 문구도 시트가 정한다.
-            case TrapIds.Gas:
-                ApplyCondition(ConditionCatalog.SleepId);
-                break;
-
-            case TrapIds.Spin:
-                ApplyCondition(ConditionCatalog.DisarrayId);
-                break;
-
-            case TrapIds.Restraint:
-                ApplyCondition(ConditionCatalog.RestraintId);
-                break;
-
-            case TrapIds.Sticky:
-                MakeRandomBagItemSticky();
-                break;
-        }
+        TrapActions.Find(trapId)?.Invoke(this);
     }
 
-    /// <summary>
-    /// 구멍. 방어력을 무시하고 아프게 한 뒤 다음 층으로 떨어뜨린다.
-    ///
-    /// 피해가 먼저다. 이 피해로 죽을 수 있고, 그때는 내려가지 않고 거기서 끝난다.
-    /// 순서를 뒤집으면 죽은 채로 다음 층이 시작된다.
-    /// </summary>
-    private IEnumerator FallThroughHole()
-    {
-        Player player = PlayerComponent;
+    // ── 표가 부르는 동작들 ─────────────────────────────────────────────────
+    //
+    // 코루틴을 시작하는 일은 MonoBehaviour 만 할 수 있어서 표가 직접 못 한다.
+    // 그래서 "시작해 달라" 는 한 줄짜리 창구를 여기 둔다.
 
-        // 떨어지는 것도 강제 이동이다. 바닥을 뚫고 내려가는 중에 적이 때리면
-        // 이미 그 층에 없는 사람을 때리는 셈이 된다.
-        ForcedMoveRunning = true;
-        InputFocus.Give(InputOwner.Prompt);
+    public void RunFallThroughHole() => StartCoroutine(FallThroughHole());
 
-        // 먼저 사라지고 나서 아프다. 순서를 뒤집으면 멀쩡히 서 있는 캐릭터가
-        // 느닷없이 5 만큼 깎여서, 무엇 때문에 아픈지가 화면에 없다.
-        if (player != null) yield return player.FallThroughFloor();
+    public void RunWarpPlayer() => StartCoroutine(WarpPlayer());
 
-        Stats.TakeDamage(TrapEffects.HoleDamage);
-        ShowMessage(GameMessage.PlayerDamaged, amount: TrapEffects.HoleDamage);
+    /// <summary>등 뒤로 날아간다. 함정이 부르는 기본 거리로.</summary>
+    public void RunBlowPlayer()
+        => StartCoroutine(BlowPlayer(-LookDirection, TrapEffects.BlowDistance));
 
-        if (Stats.IsDead)
-        {
-            // 층이 넘어가지 않으므로 여기서 되돌리지 않으면 보이지 않는 채로 죽는다.
-            player?.RestoreAfterFall();
-            InputFocus.ReturnToPlayer();
-            ForcedMoveRunning = false;
-            GameOver();
-            yield break;
-        }
+    // 구멍 · 워프 · 날리기의 실제 동작은 ForcedMoves 가 한다(250 줄).
+    // 셋 다 "플레이어를 옮기는 동안 턴을 멈추고, 도착한 땅으로 결말이 갈린다" 는
+    // 같은 흐름이라 한 파일에 모아 두었다.
 
-        // 문구를 읽을 틈을 준다. 달리는 중이면 건너뛴다.
-        if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
+    /// <summary>무작위 방으로 옮긴다. 함정 말고 지팡이·능력에서도 부른다.</summary>
+    public IEnumerator WarpPlayer() => forcedMoves.WarpPlayer();
 
-        player?.RestoreAfterFall();
-        InputFocus.ReturnToPlayer();
-        ForcedMoveRunning = false;
-
-        SceneManager.LoadScene("SampleScene");
-    }
-
-    /// <summary>
-    /// 워프. 다른 방의 빈 칸으로 옮긴다.
-    ///
-    /// 함정 전용이 아니다 — 지팡이·능력에서도 그대로 부르면 된다.
-    /// 옮기는 동안 ForcedMoveRunning 을 세워, 적이 지난 자리를 기준으로
-    /// 움직이거나 때리지 않게 한다.
-    ///
-    /// 갈 곳을 먼저 정하고 나서 연출을 시작한다. 연출을 띄워 놓고 자리를 못
-    /// 찾으면 올라갔다가 제자리로 내려오는 꼴이 되기 때문이다.
-    /// </summary>
-    public IEnumerator WarpPlayer()
-    {
-        Player player = PlayerComponent;
-        if (player == null || MapMake == null || FloorTilemap == null) yield break;
-
-        // 자리를 고르는 일은 전부 칸 좌표로 한다. 월드 좌표는 칸 중심이 x+0.5 라서
-        // 그걸로 계산하면 반 칸씩 어긋난다(TrapEffects 주석). 월드로 되돌리는 것은
-        // 맨 마지막 한 번뿐이다.
-        bool found = TrapEffects.TryPickWarpDestination(
-            MapMake.RoomCells,
-            EnemyCells(),
-            FloorTilemap.WorldToCell(player.transform.position),
-            // using System 이 있어 Random 만으로는 어느 쪽인지 가려지지 않는다.
-            (min, max) => UnityEngine.Random.Range(min, max),
-            out Vector3Int destinationCell);
-
-        // 갈 곳이 없으면(방이 하나뿐이고 적으로 가득 찬 경우) 아무 일도 없다.
-        if (!found) yield break;
-
-        ForcedMoveRunning = true;
-        InputFocus.Give(InputOwner.Prompt);
-
-        yield return player.WarpTo(GridUtil.CellCenter(FloorTilemap, destinationCell));
-
-        InputFocus.ReturnToPlayer();
-        ForcedMoveRunning = false;
-    }
-
-    /// <summary>
-    /// 날리기. direction 방향으로 cells 칸 밀어낸다.
-    ///
-    /// 함정 전용이 아니다 — 밀어내는 지팡이나 능력도 이것을 부르면 된다.
-    /// 그래서 방향과 거리를 밖에서 받는다.
-    ///
-    /// 날아가는 판정은 던진 아이템과 같은 RangedShot 을 쓴다. 같은 규칙으로
-    /// 날아가야 "던진 것은 저기까지 가는데 나는 왜 여기서 멈추지" 가 안 생긴다.
-    /// </summary>
+    /// <summary>그 방향으로 날려 보낸다. 함정 말고 지팡이·능력에서도 부른다.</summary>
     public IEnumerator BlowPlayer(Vector2 direction, int cells)
-    {
-        Player player = PlayerComponent;
-        if (player == null || FloorTilemap == null) yield break;
-        if (direction == Vector2.zero || cells <= 0) yield break;
+        => forcedMoves.BlowPlayer(direction, cells);
 
-        var step = new Vector2Int(
-            Mathf.RoundToInt(direction.x), Mathf.RoundToInt(direction.y));
+    /// <summary>구멍에 빠져 다음 층으로 떨어진다.</summary>
+    public IEnumerator FallThroughHole() => forcedMoves.FallThroughHole();
 
-        Vector3Int origin = FloorTilemap.WorldToCell(player.transform.position);
-
-        // 살아 있는 적을 판정 대상으로 넘긴다. 부딪히면 거기서 멈춘다.
-        var living = new List<Enemy>();
-        var targets = new List<Vector3Int>();
-        foreach (Enemy enemy in enemies)
-        {
-            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
-            living.Add(enemy);
-            targets.Add(FloorTilemap.WorldToCell(enemy.transform.position));
-        }
-
-        RangedShot.Result shot = RangedShot.Trace(
-            new TilemapWalkableGrid(FloorTilemap), origin, step, cells, targets);
-
-        // 적에게 부딪혔으면 그 앞 칸이 내가 설 자리다.
-        // 같은 칸에 겹쳐 서면 둘 다 빠져나오지 못한다.
-        Vector3Int landingCell = shot.HitTarget
-            ? new Vector3Int(shot.ImpactCell.x - step.x, shot.ImpactCell.y - step.y, 0)
-            : shot.ImpactCell;
-
-        Vector3 landing = GridUtil.CellCenter(FloorTilemap, landingCell);
-
-        ForcedMoveRunning = true;
-        InputFocus.Give(InputOwner.Prompt);
-
-        yield return player.BlowTo(landing, direction, shot.StoppedByWall || shot.HitTarget);
-
-        // 부딪힌 적이 있으면 둘 다 아프다. 서로 부딪힌 것이므로 한쪽만 아플 이유가 없다.
-        if (shot.HitTarget)
-            yield return CollideWith(living[shot.TargetIndex]);
-
-        // 떨어진 자리의 땅이 무엇이냐에 따라 갈린다.
-        TrapEffects.BlowOutcome outcome = TrapEffects.ResolveBlow(
-            TileRules.KindAt(FloorTilemap, landing), shot.StoppedByWall);
-
-        yield return ApplyBlowOutcome(outcome);
-
-        InputFocus.ReturnToPlayer();
-        ForcedMoveRunning = false;
-    }
-
-    /// <summary>날려지다 적과 부딪혔다. 둘 다 방어력 무시 피해를 입는다.</summary>
-    private IEnumerator CollideWith(Enemy target)
-    {
-        if (target == null) yield break;
-
-        ShowTwoLines(
-            MessageCatalog.Format(GameMessage.BlownIntoEnemy, target.DisplayName),
-            MessageCatalog.Format(GameMessage.PlayerDamaged, amount: TrapEffects.BlowWallDamage));
-
-        // 맞은 쪽이 먼저다. 플레이어가 여기서 죽으면 게임 오버로 넘어가는데,
-        // 그 뒤에 적을 때리면 이미 끝난 판에서 경험치가 들어온다.
-        target.TakeTrueDamage(TrapEffects.BlowWallDamage);
-        Stats.TakeDamage(TrapEffects.BlowWallDamage);
-
-        if (Stats.IsDead) GameOver();
-
-        if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
-    }
-
-    /// <summary>살아 있는 적들이 선 칸.</summary>
-    private List<Vector3Int> EnemyCells()
-    {
-        var cells = new List<Vector3Int>();
-        if (FloorTilemap == null) return cells;
-
-        foreach (Enemy enemy in enemies)
-        {
-            if (enemy != null && enemy.gameObject.activeInHierarchy)
-                cells.Add(FloorTilemap.WorldToCell(enemy.transform.position));
-        }
-        return cells;
-    }
-
-    /// <summary>날려진 끝에 일어나는 일. 판정은 TrapEffects 가 이미 정했다.</summary>
-    private IEnumerator ApplyBlowOutcome(TrapEffects.BlowOutcome outcome)
-    {
-        switch (outcome)
-        {
-            case TrapEffects.BlowOutcome.HitWall:
-                ShowTwoLines(
-                    MessageCatalog.Format(GameMessage.BlownIntoWall),
-                    MessageCatalog.Format(
-                        GameMessage.PlayerDamaged, amount: TrapEffects.BlowWallDamage));
-                Stats.TakeDamage(TrapEffects.BlowWallDamage);
-                if (Stats.IsDead) GameOver();
-                break;
-
-            case TrapEffects.BlowOutcome.Water:
-                ShowMessage(GameMessage.BlownIntoWater);
-                if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
-
-                // 물에 들어갈 수 없는 상태로 물 한가운데 놓이면 나올 길이 없다.
-                //
-                // 안쪽의 WarpPlayer 가 끝나면서 ForcedMoveRunning 을 내린다.
-                // 그 시점에는 옮기는 일이 이미 다 끝나 있어서, 그때 적 턴이
-                // 풀려도 적은 새 자리를 보고 움직인다.
-                yield return WarpPlayer();
-                break;
-
-            case TrapEffects.BlowOutcome.Lava:
-                int burn = TrapEffects.LavaDamage(Stats.Hp);
-                ShowTwoLines(
-                    MessageCatalog.Format(GameMessage.BlownIntoLava),
-                    MessageCatalog.Format(GameMessage.PlayerDamaged, amount: burn));
-                Stats.TakeDamage(burn);
-
-                if (Stats.IsDead) { GameOver(); break; }
-
-                if (!FastForward) yield return new WaitForSeconds(TrapMessagePause);
-                yield return WarpPlayer();
-                break;
-
-            case TrapEffects.BlowOutcome.Pit:
-                // 절벽은 구멍 함정과 똑같이 다룬다. 같은 일이 일어난 것이므로
-                // 처리도 한 곳에 두어야 한쪽만 고쳐지는 일이 없다.
-                yield return FallThroughHole();
-                break;
-        }
-    }
 
     // ── 상태이상 ───────────────────────────────────────────────────────────
 
@@ -978,7 +718,7 @@ public class GameManager : MonoBehaviour
         GameObject chosen = candidates[UnityEngine.Random.Range(0, candidates.Count)];
         ItemInstance.SetSticky(chosen, true);
 
-        ShowMessage(GameMessage.BecameSticky, ItemInstance.DisplayNameOf(chosen));
+        ShowMessage(GameMessage.BecameSticky, ItemInstance.FullNameOf(chosen));
     }
 
     /// <summary>
@@ -1004,16 +744,40 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public static bool HasEffect(ConditionEffect effect)
     {
-        foreach (string id in Conditions.ActiveIds)
+        foreach (ConditionEffect active in ActiveEffects)
         {
-            ConditionDefinition definition = ConditionCatalog.Find(id);
-            if (definition != null && definition.Effect == effect) return true;
+            if (active == effect) return true;
         }
         return false;
     }
 
+    /// <summary>
+    /// 지금 걸려 있는 효과들. 무엇을 못 하게 되는지는 ConditionRules 가 정한다.
+    ///
+    /// 부르는 쪽이 효과를 직접 묻지 않게 하려고 이 목록을 내놓는다 —
+    /// "SkipTurn 이 걸렸나" 가 아니라 "행동할 수 있나" 를 묻게 하기 위해서다.
+    /// </summary>
+    public static IEnumerable<ConditionEffect> ActiveEffects
+    {
+        get
+        {
+            foreach (string id in Conditions.ActiveIds)
+            {
+                ConditionDefinition definition = ConditionCatalog.Find(id);
+                if (definition != null) yield return definition.Effect;
+            }
+        }
+    }
+
+    /// <summary>이번 턴에 스스로 행동할 수 있는가(잠·마비 따위에 걸리지 않았는가).</summary>
+    public static bool PlayerCanAct => ConditionRules.CanAct(ActiveEffects);
+
+    /// <summary>가려던 방향이 제멋대로 바뀌는가(혼란).</summary>
+    public static bool PlayerDirectionScrambled
+        => ConditionRules.ScramblesDirection(ActiveEffects);
+
     /// <summary>한 턴이 지났다. 남은 턴을 줄이고 풀린 것을 알린다.</summary>
-    private void TickConditions()
+    internal void TickConditions()
     {
         foreach (string id in Conditions.Tick())
         {
@@ -1041,12 +805,103 @@ public class GameManager : MonoBehaviour
             SceneManager.LoadScene("SampleScene");
     }
 
+    /// <summary>
+    /// 중립 동료에게 말을 건다. 승낙하면 그때부터 함께 다닌다.
+    ///
+    /// 계단 앞 물음과 같은 흐름을 쓴다 — 물어보는 동안 입력 권한을 가져가고,
+    /// 답을 고르면 돌려준다. 물음 자체는 이력에 남기지 않는다(9절).
+    ///
+    /// <b>턴을 쓰지 않는다.</b> 말을 거는 것은 자리를 옮기지도 때리지도 않는데
+    /// 그 사이에 적이 한 걸음 다가오면, 말을 걸었다는 이유로 손해를 본다.
+    /// </summary>
+    public IEnumerator PromptJoin(Partner partner)
+    {
+        if (partner == null) yield break;
+
+        InputFocus.Give(InputOwner.Prompt);
+
+        // 말을 걸 때 누른 그 A 를 물음이 그대로 읽어 버린다. 소비해 두지 않으면
+        // 예/아니오가 뜨자마자 '예' 로 정해져, 고를 틈도 없이 동료가 된다.
+        // 한 프레임을 흘려보내는 것은 가방 화면이 쓰는 것과 같은 장치다.
+        GameInput.ConsumeAction();
+        yield return null;
+
+        // 만났을 때의 대사를 그대로 띄우고 예/아니오를 받는다.
+        //
+        // "함께 가겠습니까?" 를 따로 붙이지 않는다. 시트의 대사가 이미 묻고 있고
+        // ("같이 동행할까?"), 예/아니오가 떠 있으면 무엇을 고르는지는 자명하다.
+        // 두 번 물으면 같은 말이 겹쳐 보인다.
+        //
+        // 대사를 안 적어 둔 동료(지금 일곱)는 이름만 뜬다. 대사가 비는 것은
+        // 잘못이 아니라서(PartnerLineSheet) 여기서 메꾸지 않는다.
+        string meet = partner.MeetLine;
+
+        messageBox.ShowPersistent(
+            meet.Length > 0 ? $"{partner.DisplayName}: {meet}" : partner.DisplayName);
+
+        var answer = new MessageBoxView.Choice();
+        yield return messageBox.AskYesNo(answer);
+
+        InputFocus.ReturnToPlayer();
+
+        if (!answer.Value)
+        {
+            ShowMessage(GameMessage.PartnerDeclined, partner.DisplayName);
+            yield break;
+        }
+
+        if (partner.TryJoin())
+            ShowMessage(GameMessage.PartnerJoined, partner.DisplayName);
+    }
+
+    /// <summary>
+    /// 이미 동료인 상대에게 말을 건다. 세 마디를 한 상자에 담는다.
+    ///
+    ///   지금 체력이 어떤지 — 숫자가 아니라 말투로(HpLine)
+    ///   특기를 청하는 말   — 특기 자체는 아직 없다
+    ///   다음 레벨까지      — 동료는 자기 경험치로 따로 자란다
+    ///
+    /// 나눠서 띄우면 앞의 것이 곧바로 덮여 읽을 수 없다. 대사를 안 적어 둔
+    /// 동료는 그 줄만 빠진다 — 비는 것은 잘못이 아니다(PartnerLineSheet).
+    ///
+    /// <b>턴을 쓰지 않는다.</b> 물어보는 것뿐인데 그 사이에 적이 다가오면
+    /// 말을 걸었다는 이유로 손해를 본다.
+    /// </summary>
+    public void TalkToPartner(Partner partner)
+    {
+        if (partner == null) return;
+
+        // 특기는 식었고 그 동료에게 대사가 적혀 있을 때만 후보가 된다.
+        bool actionAvailable =
+            partner.ActionLine.Length > 0 && Party.IsActionReady(partner.Id, TurnCount);
+
+        switch (PartnerPlan.PickTalk(UnityEngine.Random.value, actionAvailable))
+        {
+            case PartnerTalk.Action:
+                Party.StartActionCooldown(partner.Id, TurnCount);
+                ShowText($"{partner.DisplayName}: {partner.ActionLine}");
+                return;
+
+            case PartnerTalk.Hp:
+                // 대사를 안 적어 둔 동료는 체력을 말할 수 없다. 그때는 경험치를
+                // 알려 준다 — 아무 말도 안 하면 말을 건 것이 먹지 않은 것처럼 보인다.
+                if (partner.HpLine.Length > 0)
+                {
+                    ShowText($"{partner.DisplayName}: {partner.HpLine}");
+                    return;
+                }
+                break;
+        }
+
+        ShowMessage(GameMessage.PartnerExpRemaining, amount: partner.ExpRemaining);
+    }
+
     // ── 턴 진행 ────────────────────────────────────────────────────────────
 
     /// <summary>플레이어 행동이 끝났다. 적들에게 차례를 넘긴다.</summary>
     public void EndPlayerTurn()
     {
-        StartCoroutine(MoveEnemies());
+        StartCoroutine(turnLoop.MoveEnemies());
     }
 
     /// <summary>메시지를 띄우고 차례를 넘긴다.</summary>
@@ -1055,154 +910,29 @@ public class GameManager : MonoBehaviour
         ShowMessage(message, name, amount, secondName);
         EndPlayerTurn();
     }
+    // 한 턴의 흐름(동료 → 적 → 만복도 → 자연 회복)은 TurnLoop 이 갖고 있다.
+    // 여기 남는 것은 "차례를 넘긴다" 는 창구뿐이다.
 
-    private IEnumerator MoveEnemies()
+
+
+    public void AddPartner(Partner partner)
     {
-        playersTurn = false;
-
-        // 중요한 알림을 읽는 동안에는 적을 움직이지 않는다.
-        //
-        // 레벨업 같은 것을 읽으라고 띄워 놓고 그 사이에 적이 때리면, 읽을 수도 없고
-        // 맞은 것도 못 본다. 확인을 누를 때까지 턴 자체를 멈춘다.
-        // 턴 수도 아직 올리지 않는다 — 굶주림 같은 것이 읽는 동안 흘러가면 안 된다.
-        while (messageBox.ShowingImportant)
-            yield return null;
-
-        // 워프·날리기가 끝나기를 기다린다. 옮겨진 뒤의 자리를 기준으로 움직여야
-        // 적이 빈 칸을 쫓거나 때리는 일이 없다.
-        while (ForcedMoveRunning)
-            yield return null;
-
-        TurnCount++;
-
-        ApplyHungerTick();
-        TickConditions();
-
-        // 빨리감기 중에는 연출용 대기를 건너뛴다. 이 대기가 없으면 아래 과정이
-        // 전부 같은 프레임 안에서 끝나므로, 달리기 한 번이 한 프레임에 처리된다.
-        if (!FastForward)
-            yield return new WaitForSeconds(EnemyTurnDelay);
-
-        // 적들이 서로 같은 칸으로 몰리지 않도록, 이번 턴의 예약 위치를 새로 받는다.
-        enemyPositions.Clear();
-
-        foreach (Enemy enemy in enemies)
-            if (enemy != null) enemy.BeginTurn();
-
-        // 이번 턴의 길찾기 지도를 한 번만 만든다. 적이 몇 마리든 탐색은 한 번이다.
-        if (enemies.Count > 0 && Player != null && FloorTilemap != null)
-            Chase.Rebuild(new TilemapWalkableGrid(FloorTilemap), Player.transform.position);
-
-        // ── 적의 한 턴은 세 단계로 나뉜다 ──────────────────────────────────
-        //
-        // 예전에는 적 하나하나를 처음부터 끝까지 차례로 돌렸다. 그런데 이동하는 적은
-        // 저마다 WaitForFixedUpdate 를 한 번씩 기다리므로, 그 대기가 마릿수만큼
-        // 쌓여서 적이 많은 방일수록 플레이어 조작이 눈에 띄게 굼떠졌다.
-        //
-        // 차례로 돌아야 하는 것은 '공격' 뿐이다. 겹쳐 때리면 누구에게 얼마나 맞았는지
-        // 메시지창에 마지막 하나만 남기 때문이다. 이동은 겹쳐도 아무 문제가 없다.
-
-        // 1. 무엇을 할지 먼저 전부 정한다.
-        //    이동보다 먼저 정해 두어야, 앞의 적이 움직여 붙는 바람에 뒤의 적 판단이
-        //    달라지는 일이 없다. 목록 순서가 규칙이 되어서는 안 된다.
-        //
-        //    적이 행동하다 죽어 목록에서 빠질 수 있으므로 복사본을 돌린다.
-        var movers = new List<Enemy>();
-        var attackers = new List<Enemy>();
-
-        foreach (Enemy enemy in new List<Enemy>(enemies))
-        {
-            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
-
-            if (enemy.DecideAttack()) attackers.Add(enemy);
-            else movers.Add(enemy);
-        }
-
-        // 2. 이동은 마릿수와 상관없이 같은 프레임에 끝낸다.
-        //    같은 칸으로 겹쳐 들어가는 것은 enemyPositions 예약이 막아 준다.
-        //
-        //    가까운 적부터 움직인다. 줄지어 쫓아올 때 앞선 적이 먼저 비켜 주어야
-        //    뒤의 적이 그 칸을 이어받는다. 순서가 반대면 뒤의 적이 아직 차 있는
-        //    칸을 보고 물러서서, 도망치는 플레이어와의 간격이 계속 벌어진다.
-        movers.Sort((a, b) => a.StepsToPlayer.CompareTo(b.StepsToPlayer));
-
-        foreach (Enemy enemy in movers)
-            enemy.TakeStep();
-
-        // 옮긴 좌표(MovePosition)가 화면에 반영되도록 한 번만 기다린다.
-        // 적이 백 마리든 이 대기는 한 번뿐이다.
-        if (!FastForward && movers.Count > 0)
-            yield return new WaitForFixedUpdate();
-
-        // 3. 때리는 적만 한 마리씩. 플레이어에 붙어 있는 것들뿐이라 많아야 여덟이다.
-        foreach (Enemy enemy in attackers)
-        {
-            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
-
-            if (FastForward)
-            {
-                // 빨리감기 중에는 공격에 기다림이 없다(Enemy.AttackTurn).
-                // 코루틴으로 넘기면 그것만으로 한 프레임을 쓰므로 그 자리에서 돌린다.
-                IEnumerator turn = enemy.AttackTurn();
-                while (turn.MoveNext()) { }
-            }
-            else
-            {
-                yield return enemy.AttackTurn();
-            }
-
-            // 도중에 죽었으면 나머지 적을 움직일 이유가 없다.
-            if (Stats.IsDead) break;
-        }
-
-        // 여기서 InteractionHandled 를 건드리지 않는다.
-        //
-        // 그 값은 "밟은 칸을 아직 살펴보지 않았다" 는 뜻이고, 새 칸에 도착할 때(TryStep)
-        // 열려서 실제로 처리한 순간(OnTriggerStay2D)에 닫힌다. 즉 턴이 아니라
-        // '도착' 단위의 표시다.
-        //
-        // 예전에는 턴이 끝날 때 여기서 닫았는데, 달리는 중에는 이 코루틴이 동기로
-        // 끝나기 때문에 물리 프레임이 오기도 전에 닫혀 버렸다. 그래서 달려서 밟은
-        // 함정·계단·아이템이 하나도 처리되지 않았다 — 달리기로 함정을 통째로
-        // 피할 수 있었다는 뜻이다.
-        //
-        // 놓자마자 도로 줍는 것을 막는 일은 Player.placedUnderFoot 가 따로 맡고 있어서,
-        // 여기서 닫지 않아도 그 보호는 그대로다.
-        playersTurn = true;
+        if (partner != null && !partners.Contains(partner)) partners.Add(partner);
     }
 
-    /// <summary>턴이 지날 때마다 배가 고파지고, 굶으면 체력이 깎인다.</summary>
-    /// <summary>
-    /// 만복도가 줄어드는 간격. 장비가 늘려 준다.
-    ///
-    /// 간격이 길어질수록 배가 늦게 고파진다. 소모량을 줄이지 않고 간격을 늘리는
-    /// 이유는, 소모량은 이미 1 이라 더 줄일 수가 없기 때문이다.
-    /// </summary>
-    private int HungerInterval
-        => HungerTickInterval + (Gear != null ? Gear.AbilityValue(EquipAbility.SlowHunger) : 0);
+    public void RemovePartner(Partner partner) => partners.Remove(partner);
 
-    private void ApplyHungerTick()
+    /// <summary>이 칸에 서 있는 동료. 없으면 null. 자리 바꾸기가 쓴다.</summary>
+    public Partner PartnerAt(Vector3 position)
     {
-        if (TurnCount % HungerInterval == 0 && !Stats.IsStarving)
+        foreach (Partner partner in partners)
         {
-            int before = Stats.Hunger;
-            Stats.ConsumeHunger();
+            if (partner == null || !partner.gameObject.activeInHierarchy) continue;
 
-            HungerWarning.Level level =
-                HungerWarning.For(before, Stats.Hunger, Stats.MaxHunger);
-
-            if (level != HungerWarning.Level.None)
-                ShowMessage(HungerWarning.MessageOf(level));
-
-            if (!Stats.IsHpFull && TurnCount % RecoveryTickInterval == 0)
-                Stats.Heal(Stats.NaturalRecoveryAmount());
+            if (Vector2.Distance(partner.transform.position, position) < 0.1f)
+                return partner;
         }
-
-        if (Stats.IsStarving && !Stats.IsDead)
-        {
-            Stats.TakeDamage(1);
-            GameOver();
-        }
+        return null;
     }
 
     public void AddEnemyToList(Enemy enemy) => enemies.Add(enemy);
@@ -1217,395 +947,21 @@ public class GameManager : MonoBehaviour
         enemies.Clear();
     }
 
-    // ── 가방 ───────────────────────────────────────────────────────────────
+    // ── 가방·아이템 ────────────────────────────────────────────────────────
+    //
+    // 실제 일은 ItemCommands 가 한다(400 줄). 여기 남는 것은 바깥에서 부르는
+    // 창구뿐이다 — Player 가 이 셋을 부른다.
 
     /// <summary>가방을 연다. 닫히거나 아이템을 쓸 때까지 조작이 잠긴다.</summary>
-    public void OpenBag() => OpenItemMenu(startOnGround: false);
+    public void OpenBag() => items.OpenBag();
 
-    /// <summary>
-    /// 발밑 화면을 연다. 밟고 선 것이 무엇이냐에 따라 하는 일이 다르다.
-    ///
-    ///   함정  - 다시 밟아 작동을 시도한다(턴을 쓴다)
-    ///   아이템 - 줍기 / 교환하기 화면을 연다
-    ///   아무것도 없으면 그렇다고 알린다(턴을 쓰지 않는다)
-    ///
-    /// 함정을 먼저 보는 이유는, 함정과 아이템이 같은 칸에 놓이지 않도록
-    /// 던전을 만들 때 떨어뜨려 두기 때문이다(DungeonPopulator.PlaceTraps).
-    /// 그래도 겹치는 일이 생기면 함정 쪽이 급한 일이다.
-    /// </summary>
-    public void UseUnderFoot()
-    {
-        Player player = PlayerComponent;
-
-        if (player != null && player.TrapUnderFoot != null)
-        {
-            player.TrapUnderFoot.TryTrigger();
-            EndPlayerTurn();
-            return;
-        }
-
-        if (player != null && player.ItemUnderFoot != null)
-        {
-            OpenItemMenu(startOnGround: true);
-            return;
-        }
-
-        ShowMessage(GameMessage.NothingUnderFoot);
-    }
-
-    private void OpenItemMenu(bool startOnGround)
-    {
-        InputFocus.Give(InputOwner.BagMenu);
-        messageBox.Hide();
-
-        Player player = PlayerComponent;
-        GameObject ground = player != null ? player.ItemUnderFoot : null;
-
-        var menu = new BagMenuController(
-            menuPanel, messageBox, Bag, Gear, ground, startOnGround);
-
-        StartCoroutine(RunBagMenu(menu, ground));
-    }
-
-    /// <summary>씬의 플레이어에 붙은 Player 컴포넌트. 없으면 null.</summary>
-    private Player PlayerComponent => Player != null ? Player.GetComponent<Player>() : null;
-
-    private IEnumerator RunBagMenu(BagMenuController menu, GameObject groundItem)
-    {
-        BagMenuController.ItemAction? action = null;
-        int index = 0;
-
-        yield return menu.Run((chosen, at) =>
-        {
-            action = chosen;
-            index = at;
-        });
-
-        if (action == null)
-        {
-            // 아무것도 안 하고 닫았다. 턴은 지나가지 않는다.
-            InputFocus.ReturnToPlayer();
-            yield break;
-        }
-
-        switch (action.Value)
-        {
-            case BagMenuController.ItemAction.PickUp:
-                PickUpFromGround(groundItem);
-                yield break;
-
-            case BagMenuController.ItemAction.Swap:
-                SwapWithGround(groundItem, index);
-                yield break;
-
-            case BagMenuController.ItemAction.GroundUse:
-                yield return UseOnGround(groundItem);
-                yield break;
-
-            case BagMenuController.ItemAction.GroundThrow:
-                yield return ThrowFromGround(groundItem);
-                yield break;
-        }
-
-        yield return PerformItemAction(action.Value, index);
-    }
-
-    /// <summary>
-    /// 발밑의 것을 줍는다.
-    ///
-    /// 가방이 가득 차 있으면 줍지 못하고, 이때는 턴도 쓰지 않는다.
-    /// 아무 일도 일어나지 않았는데 적이 한 걸음 다가오면 억울하기 때문이다.
-    /// </summary>
-    private void PickUpFromGround(GameObject groundItem)
-    {
-        InputFocus.ReturnToPlayer();
-
-        if (groundItem == null) return;
-
-        // 돈은 가방에 넣는 물건이 아니라 소지금으로 들어간다.
-        // 그래서 가방이 가득 차 있어도 주울 수 있다.
-        if (GoldPile.IsGold(groundItem))
-        {
-            int amount = GoldPile.AmountOf(groundItem);
-            Stats.AddGold(amount);
-
-            Ground.Remove(groundItem.transform.position);
-            groundItem.SetActive(false);
-
-            EndPlayerTurn(GameMessage.GoldPickedUp, amount: amount);
-            return;
-        }
-
-        if (Bag.IsFull)
-        {
-            ShowMessage(GameMessage.BagFull);
-            return;
-        }
-
-        string itemName = TakeFromGround(groundItem);
-        Bag.TryAdd(groundItem);
-
-        EndPlayerTurn(GameMessage.ItemPickedUpFromGround, itemName);
-    }
-
-    /// <summary>
-    /// 발밑의 것과 가방의 index 번째를 맞바꾼다.
-    ///
-    /// 가방이 가득 차 있어도 할 수 있다는 점이 '줍는다' 와 다르다.
-    /// 개수가 늘지 않기 때문이다. 가방이 꽉 찼을 때 바닥의 더 좋은 물건을
-    /// 가져갈 방법이 이것뿐이라, 이 경우를 막으면 교환의 쓸모가 거의 사라진다.
-    /// </summary>
-    private void SwapWithGround(GameObject groundItem, int index)
-    {
-        InputFocus.ReturnToPlayer();
-
-        if (groundItem == null || Bag.Count == 0) return;
-
-        // 차고 있는 끈적한 장비는 내놓을 수 없다. 교환도 가방을 떠나는 일이라
-        // 여기서 막지 않으면 아래 UnequipIfWearing 이 조용히 벗겨 버린다.
-        GameObject offered = Bag[index];
-        if (Gear.IsEquipped(offered) && ItemInstance.IsSticky(offered))
-        {
-            ShowMessage(GameMessage.StickyStuck, ItemInstance.DisplayNameOf(offered));
-            return;
-        }
-
-        string takenName = TakeFromGround(groundItem);
-
-        // 몸에 걸치고 있던 것을 내려놓게 되면 반드시 벗겨야 한다.
-        GameObject given = Bag.Replace(index, groundItem);
-        string givenName = ItemInstance.DisplayNameOf(given);
-        Gear.UnequipIfWearing(given);
-
-        // 내려놓는 쪽은 씬으로 되돌려 그 자리에 놓는다.
-        SceneManager.MoveGameObjectToScene(given, SceneManager.GetActiveScene());
-        given.transform.position = PlayerPosition;
-        given.SetActive(true);
-        Ground.Add(PlayerPosition);
-
-        // 바꿔 내놓은 것도 그 자리에서 도로 집으면 교환이 없던 일이 된다.
-        PlayerComponent?.KeepUnderFootWithoutTaking(given);
-
-        EndPlayerTurn(GameMessage.ItemSwapped, givenName, secondName: takenName);
-    }
-
-    /// <summary>
-    /// 발밑의 것을 줍지 않고 그 자리에서 쓴다.
-    ///
-    /// 장비는 걸치는 것이라 가방을 거쳐야 한다. 몸에 걸친 물건은 가방 안에 있다는
-    /// 것이 이 게임의 규칙이라(Equipment 주석), 바닥에 둔 채로 착용시키면
-    /// "가방에 없는데 공격력이 붙어 있는" 상태가 된다. 그래서 장비는 먼저 줍는다.
-    /// </summary>
-    private IEnumerator UseOnGround(GameObject groundItem)
-    {
-        if (groundItem == null) { InputFocus.ReturnToPlayer(); yield break; }
-
-        int itemId = ItemInstance.IdOf(groundItem);
-        string itemName = ItemInstance.DisplayNameOf(groundItem);
-
-        if (Gear.SlotOf(groundItem) != EquipmentSlot.None)
-        {
-            if (Bag.IsFull)
-            {
-                InputFocus.ReturnToPlayer();
-                ShowMessage(GameMessage.BagFull);
-                yield break;
-            }
-
-            TakeFromGround(groundItem);
-            Bag.TryAdd(groundItem);
-            ToggleEquip(groundItem, itemName);
-            yield break;
-        }
-
-        // 끈적한 것은 바닥에 있든 가방에 있든 쓸 수 없다.
-        if (ItemInstance.IsSticky(groundItem))
-        {
-            InputFocus.ReturnToPlayer();
-            ShowMessage(GameMessage.StickyUnusable, itemName);
-            yield break;
-        }
-
-        Ground.Remove(groundItem.transform.position);
-        Destroy(groundItem);
-        InputFocus.ReturnToPlayer();
-
-        if (ItemEffects.TryUse(itemId, Stats, out GameMessage useMessage))
-            EndPlayerTurn(useMessage, itemName);
-        else
-            EndPlayerTurn();
-    }
-
-    /// <summary>발밑의 것을 줍지 않고 그 자리에서 던진다.</summary>
-    private IEnumerator ThrowFromGround(GameObject groundItem)
-    {
-        if (groundItem == null) { InputFocus.ReturnToPlayer(); yield break; }
-
-        string itemName = ItemInstance.DisplayNameOf(groundItem);
-
-        // 날아가는 동안에는 이 칸에 없으므로 바닥 목록에서 먼저 뺀다.
-        // ItemThrower 가 떨어진 자리에 다시 넣어 준다.
-        Ground.Remove(groundItem.transform.position);
-
-        // 밟고 선 칸에 있으니 이미 같은 자리지만, 던지기는 출발점을 기준으로
-        // 거리를 세므로 어긋난 채로 시작하지 않도록 맞춰 둔다.
-        groundItem.transform.position = PlayerPosition;
-
-        var thrower = new ItemThrower(FloorTilemap, Ground, enemies);
-        GameMessage? result = null;
-
-        yield return thrower.Throw(
-            groundItem, LookDirection, Stats, message => result = message);
-
-        InputFocus.ReturnToPlayer();
-
-        if (result.HasValue) EndPlayerTurn(result.Value, itemName);
-        else EndPlayerTurn();
-    }
-
-    /// <summary>바닥의 물건을 손에 넣을 수 있는 상태로 만든다. 이름을 돌려준다.</summary>
-    private string TakeFromGround(GameObject groundItem)
-    {
-        DontDestroyOnLoad(groundItem);
-        groundItem.name = groundItem.name.Replace("(Clone)", string.Empty);
-
-        Ground.Remove(groundItem.transform.position);
-        groundItem.SetActive(false);
-
-        return groundItem.name;
-    }
-
-    /// <summary>가방에서 고른 행동을 실제로 수행한다.</summary>
-    private IEnumerator PerformItemAction(BagMenuController.ItemAction action, int index)
-    {
-        GameObject item = Bag[index];
-        int itemId = ItemInstance.IdOf(item);
-        string itemName = ItemInstance.DisplayNameOf(item);
-
-        // 장비는 가방에서 빠지지 않는다. 차고 있다는 표시만 바뀐다.
-        if (action == BagMenuController.ItemAction.Use && Gear.SlotOf(item) != EquipmentSlot.None)
-        {
-            ToggleEquip(item, itemName);
-            yield break;
-        }
-
-        // ── 끈적끈적 ───────────────────────────────────────────────────────
-        //
-        // 소모품이면 쓸 수 없다. 버리거나 던지는 것은 되므로 여기서만 막는다.
-        if (action == BagMenuController.ItemAction.Use && ItemInstance.IsSticky(item))
-        {
-            InputFocus.ReturnToPlayer();
-            ShowMessage(GameMessage.StickyUnusable, itemName);
-            yield break;
-        }
-
-        // 차고 있는 끈적한 장비는 가방을 떠날 수 없다. 벗을 수 없다는 것이
-        // 곧 "버리지도 던지지도 교환하지도 못한다" 는 뜻이다 — 여기서 막지 않으면
-        // 아래 UnequipIfWearing 이 조용히 벗겨서 규칙에 구멍이 난다.
-        if (Gear.IsEquipped(item) && ItemInstance.IsSticky(item))
-        {
-            InputFocus.ReturnToPlayer();
-            ShowMessage(GameMessage.StickyStuck, itemName);
-            yield break;
-        }
-
-        // 몸에 걸치고 있던 것이 가방을 떠나면 반드시 벗겨야 한다.
-        // 그러지 않으면 손에 없는 물건의 공격력이 계속 붙어 있게 된다.
-        Gear.UnequipIfWearing(item);
-
-        // DontDestroyOnLoad 로 옮겨 뒀던 오브젝트를 현재 씬으로 되돌린다.
-        SceneManager.MoveGameObjectToScene(item, SceneManager.GetActiveScene());
-        Bag.RemoveAt(index);
-
-        switch (action)
-        {
-            case BagMenuController.ItemAction.Use:
-                Destroy(item);
-                InputFocus.ReturnToPlayer();
-
-                if (ItemEffects.TryUse(itemId, Stats, out GameMessage useMessage))
-                    EndPlayerTurn(useMessage, itemName);
-                else
-                    EndPlayerTurn();
-                break;
-
-            case BagMenuController.ItemAction.Drop:
-                item.transform.position = PlayerPosition;
-                item.SetActive(true);
-                Ground.Add(PlayerPosition);
-
-                // 방금 내 손으로 놓은 것이므로 그 자리에서 도로 집지 않는다.
-                PlayerComponent?.KeepUnderFootWithoutTaking(item);
-
-                InputFocus.ReturnToPlayer();
-                EndPlayerTurn(GameMessage.ItemDropped, itemName);
-                break;
-
-            case BagMenuController.ItemAction.Throw:
-                item.transform.position = PlayerPosition;
-                item.SetActive(true);
-
-                var thrower = new ItemThrower(FloorTilemap, Ground, enemies);
-                GameMessage? result = null;
-
-                yield return thrower.Throw(
-                    item, LookDirection, Stats,
-                    message => result = message);
-
-                InputFocus.ReturnToPlayer();
-
-                // 적에게 맞았다면 그쪽에서 이미 결과를 알렸으므로 덧붙이지 않는다.
-                if (result.HasValue)
-                    EndPlayerTurn(result.Value, itemName);
-                else
-                    EndPlayerTurn();
-                break;
-        }
-    }
-
-    /// <summary>
-    /// 장비를 차거나 벗는다. 어느 쪽이든 가방에는 그대로 남는다.
-    /// 같은 슬롯에 이미 뭔가 차고 있었다면 그것과 바꿔 낀다.
-    /// </summary>
-    private void ToggleEquip(GameObject item, string itemName)
-    {
-        InputFocus.ReturnToPlayer();
-
-        if (Gear.IsEquipped(item))
-        {
-            // 차는 것은 됐지만 벗는 것은 안 된다. 끈적한 장비를 집어 든 순간이
-            // 아니라 <b>차는 순간</b>이 돌이킬 수 없는 지점이다.
-            if (ItemInstance.IsSticky(item))
-            {
-                ShowMessage(GameMessage.StickyStuck, itemName);
-                return;
-            }
-
-            Gear.Unequip(Gear.SlotOf(item));
-            EndPlayerTurn(GameMessage.Unequipped, itemName);
-            return;
-        }
-
-        Gear.TryEquip(item);
-        EndPlayerTurn(GameMessage.Equipped, itemName);
-    }
+    /// <summary>발밑의 것을 쓴다. 함정이면 다시 밟고, 아이템이면 화면을 연다.</summary>
+    public void UseUnderFoot() => items.UseUnderFoot();
 
     /// <summary>바닥의 아이템을 줍는다. 가방이 가득 찼으면 줍지 못한다.</summary>
-    public void PickUpItem(GameObject item)
-    {
-        if (Bag.IsFull)
-        {
-            ShowMessage(GameMessage.BagFull);
-            return;
-        }
+    public void PickUpItem(GameObject item) => items.PickUpItem(item);
 
-        DontDestroyOnLoad(item);
-        item.name = item.name.Replace("(Clone)", string.Empty);
+    /// <summary>씬의 플레이어에 붙은 Player 컴포넌트. 없으면 null.</summary>
+    public Player PlayerComponent => Player != null ? Player.GetComponent<Player>() : null;
 
-        Bag.TryAdd(item);
-        Ground.Remove(item.transform.position);
-
-        ShowMessage(GameMessage.ItemPickedUp, item.name);
-        item.SetActive(false);
-    }
 }
