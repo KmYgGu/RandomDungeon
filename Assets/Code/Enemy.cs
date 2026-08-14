@@ -37,9 +37,6 @@ public class Enemy : MovingObject
     /// <summary>같은 칸으로 볼 거리.</summary>
     private const float SameCellThreshold = 0.1f;
 
-    /// <summary>순찰 목표를 고를 때 방 경계 밖으로 얼마나 더 살펴볼지.</summary>
-    private const int PatrolSearchMargin = 1;
-
     /// <summary>치명타가 나올 확률과 그 배율.</summary>
     private const float CriticalChance = 0.1f;
     private const double CriticalMultiplier = 1.8;
@@ -129,7 +126,85 @@ public class Enemy : MovingObject
     public bool DecideAttack()
     {
         UpdateMode();
-        return IsPlayerAdjacent();
+
+        target = PickTarget();
+        return target != null;
+    }
+
+    /// <summary>이번 턴에 때릴 상대. 플레이어면 partnerTarget 이 null 이다.</summary>
+    private GameObject target;
+    private Partner partnerTarget;
+
+    /// <summary>
+    /// 붙어 있는 것들 중 누구를 때릴지 고른다. 아무도 없으면 null.
+    ///
+    /// ── 지금은 반반이다 ───────────────────────────────────────────────
+    /// 둘 다 붙어 있으면 <b>절반의 확률</b>로 고른다. 원래는 적 성향이 갈라야 할
+    /// 자리다 — 여성을 노리는 적, 공격력이 높은 쪽을 노리는 적, 물건을 많이 든
+    /// 쪽을 노리는 적처럼. 그런 성향은 시트에 열을 하나 두고 코드가 아는 목록을
+    /// 고르게 하면 된다(EquipAbility 와 같은 방식). 지금은 그 목록이 없으므로
+    /// 치우치지 않는 반반으로 둔다.
+    ///
+    /// 반반이 중요한 이유가 있다. 늘 플레이어만 때리면 동료는 맞지 않는 벽이 되어
+    /// 데리고 다니는 것이 무조건 이득이 되고, 늘 동료만 때리면 동료가 순식간에
+    /// 녹아 데리고 다닐 수가 없다.
+    /// </summary>
+    private GameObject PickTarget()
+    {
+        partnerTarget = null;
+
+        bool playerAdjacent = IsPlayerAdjacent();
+        Partner partner = AdjacentPartner();
+
+        if (playerAdjacent && partner != null)
+        {
+            if (Random.value < 0.5f)
+            {
+                partnerTarget = partner;
+                return partner.gameObject;
+            }
+            return GameManager.instance.Player;
+        }
+
+        if (playerAdjacent) return GameManager.instance.Player;
+
+        if (partner != null)
+        {
+            partnerTarget = partner;
+            return partner.gameObject;
+        }
+
+        return null;
+    }
+
+    /// <summary>붙어 있는 동료 하나. 없으면 null. 판정은 플레이어와 똑같다.</summary>
+    private Partner AdjacentPartner()
+    {
+        Vector2 origin = transform.position;
+
+        foreach (Partner partner in GameManager.instance.partners)
+        {
+            if (partner == null || !partner.gameObject.activeInHierarchy) continue;
+
+            // 중립은 적도 건드리지 않는다. 승낙 전에 맞아 쓰러지면
+            // 플레이어는 영문도 모른 채 동료 하나를 잃는다.
+            if (!partner.Joined) continue;
+
+            Vector2 offset = (Vector2)partner.transform.position - origin;
+            if (offset.magnitude > 1.5f) continue;
+
+            var direction = new Vector2(Mathf.Round(offset.x), Mathf.Round(offset.y));
+            if (direction == Vector2.zero) continue;
+
+            if (IsBlockedByTile(origin + direction)) continue;
+
+            bool isDiagonal = Mathf.Abs(direction.x) > 0 && Mathf.Abs(direction.y) > 0;
+            if (isDiagonal && !CanMoveDiagonally(origin, direction)) continue;
+
+            return partner;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -216,7 +291,7 @@ public class Enemy : MovingObject
             return;
 
         // 지도를 못 쓰는 상황(플레이어가 물 건너편 등)의 최후 수단.
-        TryMoveAlong(CandidateDirections(DirectionToward(PlayerPosition)), rememberPath: false);
+        TryMoveAlong(MoveIntent.Toward(DirectionToward(PlayerPosition)), rememberPath: false);
     }
 
     private void StepPatrol()
@@ -244,7 +319,7 @@ public class Enemy : MovingObject
         }
 
         Vector2 preferred = DirectionToward(patrolTarget);
-        if (!TryMoveAlong(CandidateDirections(preferred), rememberPath: true))
+        if (!TryMoveAlong(MoveIntent.Toward(preferred), rememberPath: true))
         {
             // 어느 쪽으로도 못 갔다. 기억을 지우고 헤매기로 전환한다.
             ResetPatrol(startWandering: true);
@@ -323,24 +398,6 @@ public class Enemy : MovingObject
     /// 사실상 '뒤로' 만 두 번 시도했고, 수직 방향은 한 번도 시도하지 않았다.
     /// 벽 하나만 앞을 막아도 적이 그대로 멈춰 서던 원인이다.
     /// </summary>
-    private static IEnumerable<Vector2> CandidateDirections(Vector2 preferred)
-    {
-        yield return preferred;
-
-        if (preferred.x != 0 && preferred.y != 0)
-        {
-            // 대각선이 막혔으면 가로/세로로 나눠서 시도한다.
-            yield return new Vector2(preferred.x, 0);
-            yield return new Vector2(0, preferred.y);
-            yield break;
-        }
-
-        // 축 방향이면 좌우(수직)로 비켜 본 뒤, 그래도 안 되면 뒤로 물러난다.
-        var perpendicular = new Vector2(preferred.y, preferred.x);
-        yield return perpendicular;
-        yield return -perpendicular;
-        yield return -preferred;
-    }
 
     private static IEnumerable<Vector2> Shuffled(Vector2[] source)
     {
@@ -379,48 +436,23 @@ public class Enemy : MovingObject
     /// 지금 있는 방에서 나갈 수 있는 통로 지점 중 하나를 무작위로 고른다.
     /// 이미 지나온 곳만 남았으면 기억을 지우고 다시 고른다.
     /// </summary>
+    /// <summary>
+    /// 다음에 가 볼 문. 고를 수 없으면 제자리를 돌려준다(다음 턴에 다시 시도).
+    ///
+    /// 고르는 규칙은 <b>동료와 함께 쓰는 PatrolPlan</b> 이 갖고 있다. 예전에는
+    /// 여기 있었고 동료 쪽에 같은 것을 따로 만들었더니, 한쪽만 고쳤을 때
+    /// 적과 동료가 다르게 돌아다니게 됐다.
+    /// </summary>
     private Vector3 PickPatrolTarget()
     {
-        Rect currentRoom = FindRoomContaining(transform.position);
-        if (currentRoom == Rect.zero)
-        {
-            // 통로 한가운데 있는 경우. 다음 턴에 다시 시도한다.
-            return transform.position;
-        }
-
-        var expanded = new Rect(
-            currentRoom.xMin - PatrolSearchMargin,
-            currentRoom.yMin - PatrolSearchMargin,
-            currentRoom.width + PatrolSearchMargin * 2,
-            currentRoom.height + PatrolSearchMargin * 2);
-
-        List<Vector3> candidates = CollectExits(expanded, excludeVisited: true);
-        if (candidates.Count == 0)
-        {
-            visited.Clear();
-            candidates = CollectExits(expanded, excludeVisited: false);
-        }
-
-        if (candidates.Count == 0)
-            return transform.position;
-
-        return candidates[Random.Range(0, candidates.Count)];
+        return PatrolPlan.TryPickTarget(
+            transform.position, roomdata, connectionPoints, visited,
+            Random.value, out Vector3 target)
+            ? target
+            : transform.position;
     }
 
-    private List<Vector3> CollectExits(Rect area, bool excludeVisited)
-    {
-        var result = new List<Vector3>();
 
-        foreach (Vector3 point in connectionPoints)
-        {
-            var point2D = new Vector2(point.x, point.y);
-            if (!area.Contains(point2D)) continue;
-            if (excludeVisited && visited.Contains(point2D)) continue;
-            result.Add(point);
-        }
-
-        return result;
-    }
 
     private bool HasReachedPatrolTarget()
     {
@@ -429,14 +461,7 @@ public class Enemy : MovingObject
     }
 
     private Rect FindRoomContaining(Vector2 position)
-    {
-        foreach (Rect room in roomdata)
-        {
-            if (room.Contains(position))
-                return room;
-        }
-        return Rect.zero;
-    }
+        => PatrolPlan.RoomContaining(roomdata, position);
 
     // ── 전투 ───────────────────────────────────────────────────────────────
 
@@ -466,14 +491,13 @@ public class Enemy : MovingObject
     {
         currentMode = EnemyMode.Chase;
 
-        var player = GameManager.instance.Player.GetComponent<Player>();
-        if (player == null) yield break;
+        if (target == null) yield break;
 
-        // 플레이어는 바로 옆 칸에 있으므로 그 차이가 곧 찌르는 방향이다.
-        Vector2 toPlayer = (Vector2)(player.transform.position - transform.position);
+        // 상대는 바로 옆 칸에 있으므로 그 차이가 곧 찌르는 방향이다.
+        Vector2 toTarget = (Vector2)(target.transform.position - transform.position);
 
-        yield return LungeTowards(toPlayer);
-        player.Damaged(attackPower, transform.position, CriticalPercent);
+        yield return LungeTowards(toTarget);
+        StrikeTarget();
         yield return new WaitForFixedUpdate();
     }
 
@@ -481,9 +505,29 @@ public class Enemy : MovingObject
     private void StrikePlayer()
     {
         currentMode = EnemyMode.Chase;
+        StrikeTarget();
+    }
 
-        var player = GameManager.instance.Player.GetComponent<Player>();
-        if (player != null) player.Damaged(attackPower, transform.position, CriticalPercent);
+    /// <summary>
+    /// 정해 둔 상대를 때린다.
+    ///
+    /// 상대를 여기서 다시 고르지 않는다. 고르는 일은 모든 적이 <b>움직이기 전에</b>
+    /// 끝나 있어야 하는데(DecideAttack), 때릴 때 다시 고르면 앞선 적이 움직여
+    /// 만든 자리에 따라 답이 달라져 목록 순서가 곧 규칙이 된다.
+    /// </summary>
+    private void StrikeTarget()
+    {
+        if (target == null) return;
+
+        // 연출 도중에 쓰러졌을 수 있다.
+        if (partnerTarget != null)
+        {
+            if (partnerTarget.gameObject.activeInHierarchy) partnerTarget.Damaged(attackPower);
+            return;
+        }
+
+        var player = target.GetComponent<Player>();
+        if (player != null) player.Damaged(attackPower, transform.position, DealsCritical);
     }
 
     /// <summary>
@@ -575,6 +619,41 @@ public class Enemy : MovingObject
         CheckDead();
     }
 
+    /// <summary>
+    /// 동료에게 맞았다. 방어력을 빼고 들어간다.
+    ///
+    /// <b>쓰러뜨려도 플레이어는 경험치를 받지 않는다.</b> 동료가 대신 잡아 주는데
+    /// 경험치까지 오면 데리고 다니는 것이 무조건 이득이 되어 고를 이유가 사라진다.
+    /// 시리즈에서도 동료의 대가는 그것이다.
+    /// </summary>
+    public void TakeDamageFromPartner(int attack, Partner attacker)
+    {
+        if (attacker == null) return;
+
+        int damage = Mathf.Max(1, attack - defense);
+        ThisHp -= damage;
+
+        GameManager.instance.ShowMessage(
+            GameMessage.PartnerHitEnemy, attacker.DisplayName, damage);
+
+        // 싸우는 소리. 플레이어를 놓친 동료가 이걸 듣고 찾아온다.
+        GameManager.ReportNoise(transform.position);
+
+        if (ThisHp > 0) return;
+
+        // 경험치는 때린 동료에게만 간다. 플레이어는 한 점도 받지 않는다.
+        int gained = GameManager.Party.AddExp(attacker.Id, ExpReward);
+
+        GameManager.instance.ShowMessage(
+            GameMessage.PartnerDefeatedEnemy, attacker.DisplayName, ExpReward, DisplayName);
+
+        if (gained > 0)
+            GameManager.instance.ShowMessage(GameMessage.PartnerLeveledUp, attacker.DisplayName);
+
+        GameManager.instance.RemoveEnemyList(this);
+        Destroy(gameObject);
+    }
+
     /// <summary>회복 아이템을 맞았다. 적을 치료해 버린다.</summary>
     public void HealBy(int amount)
     {
@@ -610,17 +689,18 @@ public class Enemy : MovingObject
         : gameObject.name.Replace("(Clone)", string.Empty);
 
     /// <summary>
-    /// 이 적이 치명타를 낼 확률(%). 정의가 없으면 0 — 치명타를 내지 않는다.
+    /// 이 적이 치명타를 내는가. 정의가 없으면 내지 않는다.
     ///
-    /// 기본이 0 인 것이 중요하다. 모든 적이 치명타를 내면 맞는 쪽에서는 피해 폭이
-    /// 넓은 것으로만 보이고, "저 녀석은 조심해야 한다" 가 성립하지 않는다.
+    /// 기본이 '안 낸다' 인 것이 중요하다. 모든 적이 치명타를 내면 맞는 쪽에서는
+    /// 피해 폭이 넓은 것으로만 보이고, "저 녀석은 조심해야 한다" 가 성립하지 않는다.
+    /// 얼마나 자주 나는지는 Player 가 정한다(IncomingCriticalPercent).
     /// </summary>
-    public int CriticalPercent
+    public bool DealsCritical
     {
         get
         {
             MonsterDefinition definition = description != null ? description.Definition : null;
-            return definition != null ? definition.CriticalPercent : 0;
+            return definition != null && definition.DealsCritical;
         }
     }
 

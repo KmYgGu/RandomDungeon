@@ -16,7 +16,16 @@ public class Player : MovingObject
     private const float HitChance = 0.9f;
 
     /// <summary>
-    /// 적의 치명타 배율. 확률은 적마다 다르지만(Monster 시트의 critical) 배율은 같다.
+    /// 치명타를 내는 적이 실제로 치명타를 낼 확률(%).
+    ///
+    /// <b>확률은 여기 하나뿐이다.</b> 시트(Monster 의 critical)는 "내는 적인가" 만
+    /// 1/0 으로 정한다. 적마다 숫자를 적게 하면 균형을 다시 잡을 때 표의 모든 줄을
+    /// 만져야 하고, 그러다 한 줄만 옛 값으로 남으면 그 적만 조용히 다르게 논다.
+    /// </summary>
+    private const int IncomingCriticalPercent = 20;
+
+    /// <summary>
+    /// 적의 치명타 배율. 어느 적이 내든 배율은 같다.
     /// 플레이어가 낼 때와도 같은 값이다 — 한쪽만 다르면 그 차이를 설명할 길이 없다.
     /// </summary>
     private const double IncomingCriticalMultiplier = 1.8;
@@ -199,7 +208,7 @@ public class Player : MovingObject
         // 아무도 없는 곳에서 자면 화면에서도 아무 일이 일어나지 않아, 턴이 도는
         // 것조차 보이지 않는다. 그래서 자고 있다는 것을 매 턴 알린다.
         // 같은 말이 이미 떠 있으면 다시 띄우지 않으므로 이력이 더러워지지 않는다.
-        if (GameManager.HasEffect(ConditionEffect.SkipTurn))
+        if (!GameManager.PlayerCanAct)
         {
             GameManager.instance.ShowMessageUnlessRepeated(GameMessage.Sleeping);
             WaitOneTurn();
@@ -247,7 +256,9 @@ public class Player : MovingObject
 
         // B 를 누르고 있는 동안 방향을 밀면 달린다.
         // 누르는 순서는 상관없다 — B 먼저든 방향 먼저든 똑같이 달린다.
-        if (GameInput.AssistHeld && directionInput.IsPressed)
+        // 자리 바꾸기로 이번 눌림을 다 썼으면(AssistHeldAvailable) 손을 뗐다
+        // 다시 눌러야 달린다. 안 그러면 바꾸자마자 그대로 내달린다.
+        if (GameInput.AssistHeldAvailable && directionInput.IsPressed)
         {
             GameInput.ConsumeAssist();
             runRequested = true;
@@ -263,6 +274,10 @@ public class Player : MovingObject
                 runRequested = false;
                 GameManager.LookDirection = direction;
                 FaceDirection(direction);
+
+                // 앞이 동료면 달리는 대신 자리를 바꾼다.
+                // 좁은 통로에서 동료가 앞을 막으면 이것 말고는 지나갈 길이 없다.
+                if (TrySwapWithPartner(direction)) return;
 
                 // 내달려서는 안 되는 상황이면 한 걸음만 간다.
                 // 아무 일도 안 하면 "아이템 위에 올라서서 그것을 던진다" 같은 수가
@@ -291,6 +306,66 @@ public class Player : MovingObject
     }
 
     /// <summary>
+    /// 그 칸에 아직 남인 동료가 서 있으면 말을 건다. 걸었으면 true.
+    ///
+    /// 턴을 쓰지 않는다 — 말을 거는 것은 자리를 옮기지도 때리지도 않는데,
+    /// 그 사이에 적이 한 걸음 다가오면 말을 걸었다는 이유로 손해를 본다.
+    /// </summary>
+    private bool TryTalkToPartner(Vector2 destination)
+    {
+        Partner partner = GameManager.instance.PartnerAt(destination);
+        if (partner == null) return false;
+
+        // 아직 남이면 동행을 묻고, 이미 동료면 안부를 듣는다.
+        if (partner.Joined) GameManager.instance.TalkToPartner(partner);
+        else StartCoroutine(GameManager.instance.PromptJoin(partner));
+
+        return true;
+    }
+
+    /// <summary>
+    /// B 를 누른 채 동료에게 걸어 들어가면 <b>서로 자리를 맞바꾼다.</b>
+    ///
+    /// 시리즈에서 동료 시스템에 반드시 있는 장치다. 1칸 통로에서 동료가 앞을
+    /// 막으면 이것 없이는 지나갈 방법이 아예 없다.
+    ///
+    /// ── 바꾼 뒤에는 달리지 않는다 ─────────────────────────────────
+    /// 이번 B 눌림을 다 쓴 것으로 표시하고(SpendAssist) 끝낸다. 그러지 않으면
+    /// B 를 누른 채였으므로 다음 프레임에 곧바로 달리기가 걸려, 자리만 바꾸려던
+    /// 손이 통로 끝까지 내달린다. 다시 달리려면 B 를 뗐다 눌러야 한다.
+    ///
+    /// 대각선 규칙은 걸어갈 때와 같다. 모서리를 못 빠져나가는 자리는 바꿀 수도 없다 —
+    /// 여기서만 봐주면 벽을 뚫고 자리를 바꾸는 길이 생긴다.
+    /// </summary>
+    private bool TrySwapWithPartner(Vector2 direction)
+    {
+        Vector2 here = transform.position;
+        Vector2 destination = here + direction;
+
+        Partner partner = GameManager.instance.PartnerAt(destination);
+        if (partner == null) return false;
+
+        if (!CanMoveDiagonally(here, direction)) return false;
+
+        partner.SwapTo(here);
+        MoveTo(destination);
+
+        // 옮긴 자리를 알린다. <b>이걸 빠뜨리면 서로 겹친다.</b>
+        //
+        // 동료는 "플레이어가 선 칸" 을 GameManager.PlayerPosition 으로 판단하는데
+        // (Partner.CanEnter), 갱신하지 않으면 그 값이 <b>방금 비운 칸</b>을 가리킨다.
+        // 그래서 동료는 플레이어의 새 칸을 빈 칸으로 보고 그리로 들어와 버린다.
+        // 걸어서 옮길 때는 TryStep 이 해 주던 일이라, 자리 바꾸기에만 구멍이 있었다.
+        GameManager.instance.PlayerPosition = destination;
+
+        GameInput.SpendAssist();
+
+        // 자리를 바꾼 것도 한 걸음이다. 공짜로 지나가면 동료를 벽처럼 밀고 다닌다.
+        GameManager.instance.EndPlayerTurn();
+        return true;
+    }
+
+    /// <summary>
     /// 혼란에 걸려 있으면 여덟 방향 중 아무 쪽으로나 바꾼다.
     ///
     /// 방향을 <b>바꾸기만</b> 하고 걸음 자체는 그대로 둔다. 아예 못 움직이게 하면
@@ -301,7 +376,7 @@ public class Player : MovingObject
     /// </summary>
     private Vector2 ScrambleIfConfused(Vector2 direction)
     {
-        if (!GameManager.HasEffect(ConditionEffect.ScrambleDirection)) return direction;
+        if (!GameManager.PlayerDirectionScrambled) return direction;
 
         return GridUtil.EightDirections[Random.Range(0, GridUtil.EightDirections.Length)];
     }
@@ -827,26 +902,18 @@ public class Player : MovingObject
         GameManager.LookDirection = direction;
         FaceDirection(direction);
 
+        // 그쪽에 아직 남인 동료가 서 있으면 때리는 대신 말을 건다.
+        //
+        // 걸어 들어가는 것으로 하지 않은 이유는, 좁은 통로에서 지나가려던 걸음이
+        // 매번 말 걸기가 되어 버리기 때문이다. A 는 "이 방향에 무언가 한다" 는
+        // 뜻이라 적을 때리는 것과도 결이 같다.
+        if (TryTalkToPartner((Vector2)origin + direction)) return;
+
         // 연출이 끝날 때까지 조작을 잠근다.
         // 잠그지 않으면 공격 도중에 이동까지 해서 한 턴에 두 행동을 하게 된다.
         mode = Mode.Acting;
 
-        StartCoroutine(AttackRoutine(direction, CanReachWithMelee(origin, direction)));
-    }
-
-    /// <summary>
-    /// 근접 공격이 닿는가.
-    ///
-    /// 근접은 몸이 닿아야 하므로 이동과 같은 제약을 받는다. 벽 너머는 때릴 수 없고,
-    /// 벽 두 개가 맞물린 대각선 틈으로도 손이 들어가지 않는다.
-    /// 던진 아이템 같은 원거리는 이 제약을 받지 않는다(RangedShot 참고).
-    /// </summary>
-    private bool CanReachWithMelee(Vector3 origin, Vector2 direction)
-    {
-        if (TileRules.IsImpassable(tilemap, origin + (Vector3)direction)) return false;
-
-        bool diagonal = direction.x != 0f && direction.y != 0f;
-        return !diagonal || TileRules.CanMoveDiagonally(tilemap, origin, direction);
+        StartCoroutine(AttackRoutine(direction, TileRules.CanReachWithMelee(tilemap, origin, direction)));
     }
 
     /// <summary>
@@ -1288,7 +1355,10 @@ public class Player : MovingObject
     }
 
     /// <summary>적에게 맞았을 때.</summary>
-    public void Damaged(int enemyAttack, Vector2 attackerPosition, int criticalPercent = 0)
+    /// <param name="dealsCritical">
+    /// 이 적이 치명타를 내는 적인가(Monster 시트의 critical). 확률은 여기서 정한다.
+    /// </param>
+    public void Damaged(int enemyAttack, Vector2 attackerPosition, bool dealsCritical = false)
     {
         if (Random.value >= HitChance)
         {
@@ -1306,17 +1376,20 @@ public class Player : MovingObject
         int damage = GameManager.Stats.CalculateIncomingDamage(
             enemyAttack, randomFactor, GameManager.Gear.DefenseBonus);
 
-        // 치명타를 내는 적은 정해져 있다. 확률은 그 적의 것(Monster 시트의 critical)이고,
-        // 0 이면 아예 나지 않는다. 모든 적이 낸다면 맞는 쪽에서는 피해 폭이 넓은
-        // 것으로만 보여서, "저 녀석은 조심해야 한다" 가 성립하지 않는다.
+        // 치명타를 내는 적은 정해져 있다(Monster 시트의 critical 이 1 인 적).
+        // 모든 적이 낸다면 맞는 쪽에서는 피해 폭이 넓은 것으로만 보여서,
+        // "저 녀석은 조심해야 한다" 가 성립하지 않는다.
         //
         // 치명타를 무효로 만드는 장비가 있으면 평범한 공격이 된다.
-        bool critical = criticalPercent > 0 && Random.Range(0, 100) < criticalPercent;
+        bool critical = dealsCritical && Random.Range(0, 100) < IncomingCriticalPercent;
         if (critical && GameManager.Gear.Has(EquipAbility.NegateCritical))
             critical = false;
 
         if (critical)
             damage = (int)System.Math.Round(damage * IncomingCriticalMultiplier);
+
+        // 맞는 소리도 싸움이다.
+        GameManager.ReportNoise(transform.position);
 
         GameManager.Stats.TakeDamage(damage);
         GameManager.instance.ShowMessage(
