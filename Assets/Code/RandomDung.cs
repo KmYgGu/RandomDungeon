@@ -37,6 +37,18 @@ public class RandomDung : MonoBehaviour
     public GameObject stairsPrefab;
 
     /// <summary>
+    /// 적 정의 애셋 목록. <b>도감이 그림을 찾을 때만</b> 쓴다.
+    ///
+    /// 도감에 뜨는 이름·수치·설명은 전부 시트(MonsterCatalog)에서 오므로 이 칸이
+    /// 비어 있어도 도감은 돈다. 다만 <b>그림 자리가 빈 채로</b> 뜬다.
+    ///
+    /// 정의 애셋은 Resources 밖(Assets/Prefab/Monsters/monsterData)에 있어서
+    /// 코드가 스스로 찾아올 수 없다. 그래서 아이템이 itemPrefabs 로 찾는 것처럼
+    /// 여기에 끌어다 놓는다. 애셋 자체는 `Tools ▸ 시트에서 적 정의 만들기` 가 만든다.
+    /// </summary>
+    public MonsterDescription[] monsterDescriptions;
+
+    /// <summary>
     /// 동료 프리팹. 비워 두면 동료가 나오지 않는다.
     ///
     /// 지금은 첫 층에서 이 하나가 플레이어 옆에 붙는다(DungeonPopulator.PlacePartners).
@@ -122,8 +134,26 @@ public class RandomDung : MonoBehaviour
         // 3. 통로가 나란히 붙어 폭 2칸이 된 곳을 1칸으로 깎아 낸다.
         //    반드시 물길·벽 메우기보다 먼저 해야 한다. 깎아 낸 칸이 빈칸으로
         //    남아 있어야 벽으로 메워지기 때문이다.
-        new CorridorThinner(painter, layout)
-            .Thin(new TilemapWalkableGrid(floorTilemap), mapWidth, mapHeight);
+        var thinner = new CorridorThinner(painter, layout);
+        int thinned = thinner.Thin(new TilemapWalkableGrid(floorTilemap), mapWidth, mapHeight);
+
+        // 깎다 말면 폭 2칸짜리 통로가 그대로 남아 화면에서 넓게 뭉개져 보인다.
+        // 에러가 아니라 조용히 남는 것이라, 드물게 나오는 이 경우를 눈에 띄게 알린다.
+        if (thinner.StoppedAtLimit)
+        {
+            Debug.LogWarning(
+                $"{stage}층: 통로 깎기가 한도({CorridorThinner.MaxRemovals}칸)에 걸려 " +
+                "폭 2칸짜리가 남았습니다. 통로가 넓게 뭉개져 보입니다.");
+        }
+        else if (thinner.HasWideningBlock(mapWidth, mapHeight))
+        {
+            // 한도 때문이 아니라, 네 칸을 다 지워 봐도 방이 끊겨서 못 깎은 경우다.
+            // 끊는 것보다는 넓은 편이 나으므로 잘못은 아니지만, 자주 뜨면
+            // 통로가 지나치게 몰려 있다는 뜻이라 알아 둘 만하다.
+            Debug.Log(
+                $"{stage}층: 폭 2칸짜리 통로를 남겼습니다(지우면 방이 끊기는 자리). " +
+                $"깎은 칸 {thinned}개.");
+        }
 
         // 4. 물길(장식).
         new WaterwayDecorator(painter, layout).Decorate();
@@ -132,9 +162,22 @@ public class RandomDung : MonoBehaviour
         bool flooded = Random.value < FloodedStageChance;
         painter.FillEmptySpace(mapWidth, mapHeight, flooded);
 
+        // 5-2. 벽에 막혀 끝나는 짧은 곁가지를 걷어 낸다.
+        //      <b>반드시 벽을 칠한 뒤라야 한다</b> — 그 전에는 통행 판정이 빈 칸에도
+        //      '갈 수 있다' 고 답해서 엉뚱한 것이 걸린다(CorridorPruner 주석).
+        new CorridorPruner(painter).Prune(mapWidth, mapHeight);
+
+        // 5-3. 걷어 낸 자리는 빈 칸으로 남았으므로 다시 벽으로 메운다.
+        painter.FillEmptySpace(mapWidth, mapHeight, flooded);
+
         // 바깥은 허물 수 없게 두껍게 둘러 둔다. 맵 밖으로 나가면 돌아올 길이 없고,
         // 얇게 두르면 가장자리에서 카메라 배경색이 그대로 보인다.
         painter.PaintBorder(mapWidth, mapHeight, flooded);
+
+        // 5-4. 다 만들어진 층을 훑어 잘못된 자리가 남았는지 알린다. 고치지는 않는다.
+        //      걷어 내기가 제대로 돌았으면 여기서 아무것도 나오지 않아야 한다 —
+        //      매 층 실제로 확인되는 셈이다.
+        new DungeonCheck(painter, layout).Report(stage, mapWidth, mapHeight);
 
         // 6. 적이 쓸 정보를 넘겨 준다. 통로를 다 판 뒤라야 문이 확정된다.
         RoomData = layout.InteriorRects();

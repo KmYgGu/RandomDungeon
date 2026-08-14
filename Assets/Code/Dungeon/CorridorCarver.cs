@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -10,6 +10,18 @@ using UnityEngine;
 /// (지하 8층 기준 통로 구간의 71%가 중단).
 ///
 /// 지금은 방 벽에 문을 뚫고 문과 문 사이만 잇는다. 방 안은 건드리지 않는다.
+///
+/// ── 통로 수를 늘리지 않는다 ───────────────────────────────────────
+/// 한때 옆으로 크게 벗어났다 돌아오는 우회 통로와, 통로끼리 잇는 지름길을
+/// 넣어 봤다. 층이 훨씬 어지러워지고 <b>진행이 불가능한 층까지 나왔다.</b>
+///
+/// 통로가 늘면 우연히 나란히 붙어 폭 2칸이 되는 곳도 함께 는다. 그것을 1칸으로
+/// 깎는 CorridorThinner 는 한 층에 64칸까지만 깎으므로(MaxRemovals), 넘어서면
+/// <b>깎다 만 채로 끝난다.</b> 그래서 통로가 넓게 뭉개져 보였고, 깊은 층일수록
+/// (통로가 더 많아) 심했다. 우회 통로가 방 벽을 뚫어 방 모양이 무너지는 문제도 있었다.
+///
+/// 그래서 <b>모양만 바꾸고 수는 늘리지 않는</b> 쪽으로 되돌렸다. 꺾는 자리를
+/// 무작위로 잡으면 통로 하나의 길이도 지나는 칸 수도 예전과 같으면서 모양만 달라진다.
 /// </summary>
 public class CorridorCarver
 {
@@ -95,100 +107,125 @@ public class CorridorCarver
         return new Vector3Int(x, wallY, 0);
     }
 
+    /// <summary>꺾는 자리를 몇 군데나 굴려 보는가.</summary>
+    private const int RandomCandidates = 6;
+
     /// <summary>
     /// 두 문 바깥을 잇는다.
     ///
-    /// 후보는 세 가지: 중간에서 꺾는 ㄹ자와, 한쪽 끝에서 꺾는 ㄱ자 둘.
-    /// 다른 방을 가장 적게 지나가는 것을 고르고, 같으면 ㄹ자를 쓴다.
+    /// 후보는 ㄹ자와 ㄱ자 둘, 그리고 <b>꺾는 자리를 무작위로 잡은 ㄹ자</b> 여럿이다.
+    /// 다른 방을 가장 적게 지나가는 것을 고르고, 점수가 같으면 그중 아무거나 고른다.
     ///
-    /// ㄹ자를 우선하는 이유: ㄱ자는 꺾이는 지점이 반드시 두 문 중 하나에 딱 붙어서,
-    /// 그 문으로 나오자마자 벽을 만난다. 달리기가 한 칸 만에 멈춰 버린다.
-    /// ㄹ자는 양쪽 문 모두에서 절반쯤 곧게 뻗는다.
+    /// ── 왜 ㄹ자를 여럿 굴리나 ────────────────────────────────────────
+    /// 예전에는 후보가 셋뿐이었고 같은 점수면 늘 ㄹ자를 골랐다. 방 배치만 정해지면
+    /// 통로 모양이 그대로 따라 나와서, 층을 몇 번 보면 눈에 익었다.
+    ///
+    /// 꺾는 자리만 옮기면 <b>지나는 칸 수는 그대로</b>다(가로로 간 만큼 세로로도
+    /// 가야 하는 것은 변하지 않는다). 통로가 길어지지도 늘어나지도 않으므로
+    /// 폭 2칸이 되는 곳도 예전만큼만 생기고, 모양만 달라진다.
+    ///
+    /// ㄱ자는 꺾이는 지점이 두 문 중 하나에 딱 붙어서 그 문으로 나오자마자 벽을
+    /// 만난다(달리기가 한 칸 만에 멈춘다). 그래서 ㄹ자 쪽이 여럿이다.
     /// </summary>
     private void CarveBetween(
         Vector3Int from, Vector3Int to, bool primaryHorizontal, RoomInfo roomA, RoomInfo roomB)
     {
-        List<Vector3Int> zigzag = BuildZPath(from, to, primaryHorizontal);
-        List<Vector3Int> horizontalFirst = BuildLPath(from, to, true);
-        List<Vector3Int> verticalFirst = BuildLPath(from, to, false);
+        var candidates = new List<List<Vector3Int>>
+        {
+            CorridorShapes.Z(from, to, primaryHorizontal, Midpoint(from, to, primaryHorizontal)),
+            CorridorShapes.L(from, to, true),
+            CorridorShapes.L(from, to, false),
+        };
 
-        List<Vector3Int> path = zigzag;
-        int best = ScorePath(zigzag, roomA, roomB);
+        for (int i = 0; i < RandomCandidates; i++)
+            candidates.Add(RandomZ(from, to, primaryHorizontal));
 
-        int score = ScorePath(horizontalFirst, roomA, roomB);
-        if (score < best) { path = horizontalFirst; best = score; }
-
-        if (ScorePath(verticalFirst, roomA, roomB) < best)
-            path = verticalFirst;
+        List<Vector3Int> path = PickBest(candidates, roomA, roomB);
 
         foreach (Vector3Int cell in path)
         {
             // 이미 바닥이나 다른 통로가 있으면 그대로 둔다(자연스럽게 합류한다).
-            if (painter.IsEmpty(cell))
-                painter.PaintCorridorFloor(cell);
+            if (!painter.IsEmpty(cell)) continue;
+
+            // 방의 벽 테두리를 지나가는 자리면 통로가 아니라 <b>문</b>을 놓는다.
+            //
+            // ── 왜 이게 필요한가 ──────────────────────────────────────
+            // 방의 벽은 이 시점에 아직 안 칠해져 있다(FillEmptySpace 가 나중에 한다).
+            // 그래서 통로가 그 위를 지나가면 통로 바닥이 칠해지고, 방 안쪽 바닥과
+            // 곧바로 붙어 <b>벽이 사라진다.</b> 화면에서는 방에 넓은 구간이 달라붙은
+            // 것처럼 보이는데, 통로 타일과 방 타일이 섞여 있어서 폭 2칸 깎기
+            // (CorridorThinner)에도 걸리지 않고 그대로 남는다.
+            //
+            // 문을 놓으면 지나갈 수 있는 것은 같고 <b>벽에 낸 출입구</b>로 보인다.
+            // 통로가 방을 지나가는 일 자체는 점수로 이미 피하고 있으므로
+            // (ScorePath 의 RoomCrossingPenalty) 어쩔 수 없이 지나갈 때만 이렇게 된다.
+            if (IsOnRoomWall(cell)) painter.PaintDoor(cell);
+            else painter.PaintCorridorFloor(cell);
         }
+    }
+
+    /// <summary>어느 방의 벽 테두리에 놓인 칸인가. 방 안쪽은 아니다.</summary>
+    private bool IsOnRoomWall(Vector3Int cell)
+    {
+        foreach (RoomInfo room in layout.Rooms)
+        {
+            if (room.ContainsIncludingWall(cell.x, cell.y) && !room.ContainsInterior(cell.x, cell.y))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
-    /// 주 축을 따라 절반쯤 간 뒤 옆으로 건너가고, 다시 주 축으로 마저 가는 ㄹ자 경로.
-    /// 두 문 모두에서 통로가 곧게 뻗어 나온다.
+    /// 가장 점수가 낮은 것. 여럿이면 그중 아무거나 고른다.
+    ///
+    /// 같은 점수에서 늘 앞의 것을 고르면 굴린 후보가 거의 쓰이지 않는다 —
+    /// 대개 여러 모양이 나란히 0 점이기 때문이다.
     /// </summary>
-    private static List<Vector3Int> BuildZPath(Vector3Int from, Vector3Int to, bool primaryHorizontal)
+    private List<Vector3Int> PickBest(
+        List<List<Vector3Int>> candidates, RoomInfo roomA, RoomInfo roomB)
     {
-        var path = new List<Vector3Int>();
+        var best = new List<List<Vector3Int>>();
+        int bestScore = int.MaxValue;
 
-        if (primaryHorizontal)
+        foreach (List<Vector3Int> candidate in candidates)
         {
-            int midX = (from.x + to.x) / 2;
-            var firstCorner = new Vector3Int(midX, from.y, 0);
-            var secondCorner = new Vector3Int(midX, to.y, 0);
+            int score = ScorePath(candidate, roomA, roomB);
 
-            AppendLine(path, from, firstCorner);
-            AppendLine(path, firstCorner, secondCorner);
-            AppendLine(path, secondCorner, to);
-        }
-        else
-        {
-            int midY = (from.y + to.y) / 2;
-            var firstCorner = new Vector3Int(from.x, midY, 0);
-            var secondCorner = new Vector3Int(to.x, midY, 0);
-
-            AppendLine(path, from, firstCorner);
-            AppendLine(path, firstCorner, secondCorner);
-            AppendLine(path, secondCorner, to);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                best.Clear();
+                best.Add(candidate);
+            }
+            else if (score == bestScore)
+            {
+                best.Add(candidate);
+            }
         }
 
-        return path;
+        return best[Random.Range(0, best.Count)];
     }
 
-    private static List<Vector3Int> BuildLPath(Vector3Int from, Vector3Int to, bool horizontalFirst)
+    private static int Midpoint(Vector3Int from, Vector3Int to, bool primaryHorizontal)
+        => primaryHorizontal ? (from.x + to.x) / 2 : (from.y + to.y) / 2;
+
+    /// <summary>
+    /// 꺾는 자리를 두 문 사이 아무 데나 잡은 ㄹ자.
+    ///
+    /// 자리를 <b>두 문 사이에서만</b> 고르는 것이 중요하다. 바깥으로 벗어나면
+    /// 통로가 길어지고 방 벽을 뚫을 수 있다(예전에 그렇게 층이 무너졌다).
+    /// </summary>
+    private static List<Vector3Int> RandomZ(Vector3Int from, Vector3Int to, bool primaryHorizontal)
     {
-        var path = new List<Vector3Int>();
+        int a = primaryHorizontal ? from.x : from.y;
+        int b = primaryHorizontal ? to.x : to.y;
 
-        Vector3Int corner = horizontalFirst
-            ? new Vector3Int(to.x, from.y, 0)
-            : new Vector3Int(from.x, to.y, 0);
-
-        AppendLine(path, from, corner);
-        AppendLine(path, corner, to);
-        return path;
+        return CorridorShapes.Z(from, to, primaryHorizontal, RandomBetween(a, b));
     }
 
-    /// <summary>축이 하나만 다른 두 점 사이를 한 칸씩 채운다.</summary>
-    private static void AppendLine(List<Vector3Int> path, Vector3Int from, Vector3Int to)
-    {
-        int stepX = from.x == to.x ? 0 : (to.x > from.x ? 1 : -1);
-        int stepY = from.y == to.y ? 0 : (to.y > from.y ? 1 : -1);
-
-        Vector3Int cursor = from;
-        path.Add(cursor);
-
-        while (cursor.x != to.x || cursor.y != to.y)
-        {
-            cursor = new Vector3Int(cursor.x + stepX, cursor.y + stepY, 0);
-            path.Add(cursor);
-        }
-    }
+    /// <summary>두 값 사이(양 끝 포함)에서 하나 고른다.</summary>
+    private static int RandomBetween(int a, int b)
+        => Random.Range(Mathf.Min(a, b), Mathf.Max(a, b) + 1);
 
     /// <summary>
     /// 경로의 나쁜 정도. 낮을수록 좋다.
