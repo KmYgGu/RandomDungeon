@@ -462,13 +462,16 @@ public class Player : MovingObject
     /// 조준 방향의 기본값은 지금 캐릭터가 바라보는 쪽이다.
     /// 예전에는 화살표를 켜기만 해서, 지난번에 조준했던 엉뚱한 방향이 그대로 남아 있었다.
     ///
-    /// 겨누는 순서는 셋이다.
+    /// 겨누는 순서는 넷이다.
     ///   1순위 - 바로 옆(대각선 포함)에 붙어 있는 적
     ///   2순위 - 벽에 가리지 않고 직선으로 겨눌 수 있는 적(같은 방이거나 마주 보이는 통로)
+    ///   3순위 - 바로 옆(대각선 포함)에 있는 동료(중립이든 이미 합류했든 같다)
     ///   기본  - 지금 바라보는 쪽
     ///
     /// 붙어 있는 적을 먼저 보는 이유는, 조준이 대개 그 적을 때리려고 켜는 것이기
     /// 때문이다. 멀리 있는 적이 더 곧게 놓였다고 그쪽을 겨누면 손이 어긋난다.
+    /// 동료는 적보다 뒤인데, 적이 있을 땐 그쪽을 보는 게 우선이고 동료는
+    /// A 로 때리는 대신 말을 거는 것뿐이라 급하지 않기 때문이다.
     /// </summary>
     private void EnterAiming()
     {
@@ -478,6 +481,8 @@ public class Player : MovingObject
             aim = towardAdjacent;
         else if (TryFindEnemyInLine(out Vector2 towardDistant))
             aim = towardDistant;
+        else if (TryFindAdjacentPartner(out Vector2 towardPartner))
+            aim = towardPartner;
         else
             aim = GameManager.LookDirection;
 
@@ -510,6 +515,47 @@ public class Player : MovingObject
             if (!enemy.CanBeAimedAt) continue;
 
             Vector2 offset = (Vector2)enemy.transform.position - origin;
+            if (Mathf.Abs(offset.x) > 1.1f || Mathf.Abs(offset.y) > 1.1f) continue;
+
+            var step = new Vector2(Mathf.Round(offset.x), Mathf.Round(offset.y));
+            if (step == Vector2.zero) continue;
+
+            float score = Vector2.Dot(step.normalized, facing.normalized);
+
+            // 점수가 같을 때 직선 쪽을 먼저 겨눈다.
+            bool cardinal = step.x == 0f || step.y == 0f;
+            if (cardinal) score += 0.01f;
+
+            if (score <= bestScore) continue;
+
+            bestScore = score;
+            direction = step;
+        }
+
+        return direction != Vector2.zero;
+    }
+
+    /// <summary>
+    /// 한 칸 이내(대각선 포함)에 있는 동료의 방향. 없으면 false.
+    ///
+    /// 아직 남인 동료도 이미 합류한 동료도 똑같이 본다 — 이 우선순위는
+    /// "근처에 동료가 있다" 는 사실만 보는 것이지 합류 여부를 가리지 않는다.
+    /// 여럿이면 지금 바라보는 쪽에 가장 가까운 쪽을 고르고, 그것도 비슷하면
+    /// 대각선보다 직선 방향을 우선한다. 1순위(붙어 있는 적)와 같은 기준이다.
+    /// </summary>
+    private bool TryFindAdjacentPartner(out Vector2 direction)
+    {
+        Vector2 origin = transform.position;
+        Vector2 facing = GameManager.LookDirection;
+
+        direction = Vector2.zero;
+        float bestScore = float.NegativeInfinity;
+
+        foreach (Partner partner in GameManager.instance.partners)
+        {
+            if (partner == null || !partner.gameObject.activeInHierarchy) continue;
+
+            Vector2 offset = (Vector2)partner.transform.position - origin;
             if (Mathf.Abs(offset.x) > 1.1f || Mathf.Abs(offset.y) > 1.1f) continue;
 
             var step = new Vector2(Mathf.Round(offset.x), Mathf.Round(offset.y));
@@ -907,7 +953,14 @@ public class Player : MovingObject
         // 걸어 들어가는 것으로 하지 않은 이유는, 좁은 통로에서 지나가려던 걸음이
         // 매번 말 걸기가 되어 버리기 때문이다. A 는 "이 방향에 무언가 한다" 는
         // 뜻이라 적을 때리는 것과도 결이 같다.
-        if (TryTalkToPartner((Vector2)origin + direction)) return;
+        if (TryTalkToPartner((Vector2)origin + direction))
+        {
+            // 조준 중에 말을 걸었으면 조준을 푼다. 화살표가 계속 떠 있으면
+            // 다음 방향 입력이 대화가 아니라 조준 전환으로 먹혀, 손이
+            // "말을 걸면 조준이 끝난다" 는 걸 배우지 못한다.
+            if (mode == Mode.Aiming) EnterMode(Mode.Normal);
+            return;
+        }
 
         // 연출이 끝날 때까지 조작을 잠근다.
         // 잠그지 않으면 공격 도중에 이동까지 해서 한 턴에 두 행동을 하게 된다.
@@ -1327,6 +1380,7 @@ public class Player : MovingObject
         // 여기서 다시 뽑으면 발밑에서 본 액수와 어긋난다.
         int amount = GoldPile.AmountOf(coin);
         GameManager.Stats.AddGold(amount);
+        GameManager.ReportRecord(RecordStat.MostGold, GameManager.Stats.Gold);
         GameManager.Ground.Remove(transform.position);
 
         GameManager.instance.ShowMessage(GameMessage.GoldPickedUp, amount: amount);
@@ -1392,6 +1446,8 @@ public class Player : MovingObject
         GameManager.ReportNoise(transform.position);
 
         GameManager.Stats.TakeDamage(damage);
+        GameManager.ReportRecord(RecordStat.BiggestHitTaken, damage);
+
         GameManager.instance.ShowMessage(
             critical ? GameMessage.PlayerCriticallyDamaged : GameMessage.PlayerDamaged,
             amount: damage);

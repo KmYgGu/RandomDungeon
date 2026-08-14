@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -33,6 +33,7 @@ static class Program
         TestThrowLanding();
         TestGoldThrow();
         TestHungerWarning();
+        TestNaturalRecovery();
         TestConditionSheet();
         TestTrapSheet();
         TestReadingTime();
@@ -45,6 +46,10 @@ static class Program
         TestTerrainFromAsset();
         TestConditionTracker();
         TestItemMark();
+        TestItemEncyclopedia();
+        TestEnemyEncyclopedia();
+        TestPartnerEncyclopedia();
+        TestRunScore();
         TestItemOrder();
         TestWeightedPick();
         TestItemEnhancement();
@@ -107,31 +112,77 @@ static class Program
     }
 
     // ── 통로 경로가 한 칸씩 끊기지 않고 이어지는가 ─────────────────────────
+    //
+    // 모양이 둘이다(ㄱ자·ㄹ자). 어느 모양이든 <b>끊기면 갈 수 없는 길</b>이 되는데,
+    // 화면으로는 통로가 멀쩡히 그려져 있어서 걸어가 보기 전에는 모른다.
+    // 그래서 모양마다 같은 것을 확인한다 — 시작·끝이 맞는가, 한 칸씩 이어지는가.
+    //
+    // ㄹ자는 꺾는 자리를 두 문 사이 아무 데나 잡으므로 그 범위를 훑는다.
     static void TestLPathContiguity()
     {
         Console.WriteLine("[통로 경로]");
-        var build = typeof(CorridorCarver).GetMethod("BuildLPath", BindingFlags.NonPublic | BindingFlags.Static);
 
         var rnd = new System.Random(2);
-        for (int t = 0; t < 5000; t++)
+        int checkedPaths = 0;
+
+        for (int t = 0; t < 4000; t++)
         {
             var from = new Vector3Int(rnd.Next(0, 50), rnd.Next(0, 50), 0);
             var to = new Vector3Int(rnd.Next(0, 50), rnd.Next(0, 50), 0);
-            foreach (bool horizontalFirst in new[] { true, false })
-            {
-                var path = (List<Vector3Int>)build.Invoke(null, new object[] { from, to, horizontalFirst });
-                Check(path[0] == from, "경로가 시작점에서 출발하지 않음");
-                Check(path[path.Count - 1] == to, "경로가 도착점에서 끝나지 않음");
 
-                for (int i = 1; i < path.Count; i++)
+            foreach (bool primaryHorizontal in new[] { true, false })
+            {
+                int a = primaryHorizontal ? from.x : from.y;
+                int b = primaryHorizontal ? to.x : to.y;
+                int bend = Math.Min(a, b) + rnd.Next(0, Math.Abs(a - b) + 1);
+
+                var paths = new List<(string name, List<Vector3Int> path)>
                 {
-                    int step = Mathf.Abs(path[i].x - path[i - 1].x) + Mathf.Abs(path[i].y - path[i - 1].y);
-                    Check(step <= 1, $"경로가 끊김 또는 대각선 이동: {path[i - 1]} -> {path[i]}");
+                    ("ㄱ자", CorridorShapes.L(from, to, primaryHorizontal)),
+                    ("ㄹ자", CorridorShapes.Z(from, to, primaryHorizontal, bend)),
+                };
+
+                foreach ((string name, List<Vector3Int> path) in paths)
+                {
+                    Check(path[0] == from, $"{name}: 경로가 시작점에서 출발하지 않음");
+                    Check(path[path.Count - 1] == to, $"{name}: 경로가 도착점에서 끝나지 않음");
+
+                    for (int i = 1; i < path.Count; i++)
+                    {
+                        int step = Mathf.Abs(path[i].x - path[i - 1].x)
+                                 + Mathf.Abs(path[i].y - path[i - 1].y);
+                        Check(step <= 1, $"{name}: 경로가 끊김 또는 대각선 이동: {path[i - 1]} -> {path[i]}");
+                    }
+
+                    checkedPaths++;
                 }
             }
         }
-        Console.WriteLine("  10000 경로 검사 완료");
+
+        // <b>꺾는 자리를 옮겨도 지나는 칸 수는 그대로여야 한다.</b>
+        //
+        // 이것이 지켜져야 통로가 길어지지도 늘어나지도 않는다. 길어지면 방 벽을 뚫고
+        // 폭 2칸이 되는 곳이 늘어, 깎다 만 통로가 층을 뒤덮는다(실제로 그랬다).
+        //
+        // 재는 것은 목록 길이가 아니라 <b>서로 다른 칸의 수</b>다. 꺾이는 칸은 앞
+        // 구간의 끝이자 뒤 구간의 시작이라 목록에 두 번 담기는데(CorridorShapes.AppendLine),
+        // 실제로 파이는 것은 한 번뿐이라 목록 길이로 재면 꺾는 횟수만큼 부풀려진다.
+        var left = new Vector3Int(4, 10, 0);
+        var right = new Vector3Int(20, 12, 0);
+
+        int straight = DistinctCells(CorridorShapes.L(left, right, true));
+
+        for (int bend = left.x; bend <= right.x; bend++)
+        {
+            int zigzag = DistinctCells(CorridorShapes.Z(left, right, true, bend));
+            Check(zigzag == straight, $"꺾는 자리 {bend} 에서 길이가 달라짐: {zigzag} vs {straight}");
+        }
+
+        Console.WriteLine($"  {checkedPaths} 경로 · 두 모양 · 꺾어도 길이 그대로 검사 완료");
     }
+
+    /// <summary>실제로 파이는 칸 수. 꺾이는 칸이 목록에 두 번 담기는 것을 걷어 낸다.</summary>
+    static int DistinctCells(List<Vector3Int> path) => new HashSet<Vector3Int>(path).Count;
 
     // ── 달리기 상태 기계 ───────────────────────────────────────────────────
     static void TestAutoRunner()
@@ -819,6 +870,106 @@ static class Program
         Console.WriteLine("  20% · 10% · 2 · 1 · 0 단계 검사 완료");
     }
 
+    // ── 체력 자연 회복 ───────────────────────────────────────────────────────
+    //
+    // 한때 회복량을 (int) 로 잘라서 돌려주었다. 시작 상태의 회복량이 하필 정확히
+    // 1.0 이라, 독침에 힘이 <b>1만</b> 깎여도 0.875 가 되어 통째로 버려졌다 —
+    // 회복이 아예 멈췄는데 에러는 나지 않았다. 게다가 레벨이 올라 최대 체력이
+    // 23 이 되면 저절로 다시 돌아서 "가끔 되는" 것처럼 보였다.
+    //
+    // 그래서 <b>힘이 깎인 상태</b>를 콕 집어 확인한다.
+    static void TestNaturalRecovery()
+    {
+        Console.WriteLine("[체력 자연 회복]");
+
+        // 1) 힘이 온전하면 시작 상태에서 딱 1 이 찬다.
+        var full = new PlayerStats();
+        Check(Math.Abs(full.NaturalRecoveryAmount() - 1f) < 0.0001f,
+              $"온전한 힘의 회복량이 1 이 아님: {full.NaturalRecoveryAmount()}");
+
+        // 2) <b>독침 한 대(힘 -1)로 회복이 멈추면 안 된다.</b> 이것이 그 버그다.
+        var poisoned = new PlayerStats();
+        Check(poisoned.LoseStrength(1) == 1, "힘이 1 안 깎임");
+
+        float amount = poisoned.NaturalRecoveryAmount();
+        Check(amount > 0f, $"힘이 1 깎였다고 회복이 멈춤: {amount}");
+        Check(Math.Abs(amount - 0.875f) < 0.0001f, $"힘 7 의 회복량이 어긋남: {amount}");
+
+        // 3) 힘이 셀수록 빨리 찬다. '비례한다' 는 말이 성립하는지 본다.
+        var weak = new PlayerStats();
+        weak.LoseStrength(4);
+        Check(weak.NaturalRecoveryAmount() < poisoned.NaturalRecoveryAmount(),
+              "힘이 더 깎였는데 더 빨리 회복함");
+        Check(weak.NaturalRecoveryAmount() > 0f, "힘 4 인데 회복이 멈춤");
+
+        // 4) 힘이 0 이면 회복하지 않는다. 여기서만은 0 이 맞는 답이다.
+        var drained = new PlayerStats();
+        drained.LoseStrength(PlayerStats.InitialStrength);
+        Check(drained.NaturalRecoveryAmount() == 0f,
+              $"힘이 0 인데 회복함: {drained.NaturalRecoveryAmount()}");
+
+        // 5) 덜 찬 몫이 쌓여 실제로 체력이 오른다. 한 턴에 1 이 안 되더라도
+        //    여러 턴이면 그만큼 찬다 — 버리면 영영 그대로다.
+        var healing = new PlayerStats();
+        healing.LoseStrength(1);
+        healing.TakeDamage(10);
+
+        float before = healing.Hp;
+        for (int turn = 0; turn < 8; turn++)
+            healing.RecoverNaturally();
+
+        Check(healing.Hp >= before + 7f,
+              $"여덟 턴을 쉬었는데 {healing.Hp - before} 밖에 안 참");
+
+        // 6) <b>체력은 늘 정수다.</b> 소수로 두면 게이지 바와 숫자가 서로 다른
+        //    값을 읽어, 바만 움직이고 숫자는 그대로인 것처럼 보인다.
+        var stepping = new PlayerStats();
+        stepping.LoseStrength(1);
+        stepping.TakeDamage(10);
+
+        for (int turn = 0; turn < 12; turn++)
+        {
+            stepping.RecoverNaturally();
+            Check(stepping.Hp == Mathf.Floor(stepping.Hp),
+                  $"{turn}턴째 체력이 소수임: {stepping.Hp}");
+        }
+
+        // 7) 한 턴에 1 이 안 차는 힘이면 <b>차는 턴과 안 차는 턴이 갈린다.</b>
+        //    매 턴 오르면 쌓아 두는 뜻이 없고, 한 번도 안 오르면 그것이 원래 버그다.
+        var slow = new PlayerStats();
+        slow.LoseStrength(1);
+        slow.TakeDamage(10);
+
+        int gainedTurns = 0;
+        for (int turn = 0; turn < 8; turn++)
+        {
+            if (slow.RecoverNaturally() > 0) gainedTurns++;
+        }
+        Check(gainedTurns > 0, "여덟 턴 내내 한 번도 안 오름");
+        Check(gainedTurns < 8, "힘이 깎였는데 매 턴 올랐다 — 쌓아 두는 뜻이 없음");
+
+        // 8) 최대치를 넘지 않고, 오래 쉬면 가득 찬다.
+        var brimming = new PlayerStats();
+        brimming.TakeDamage(1);
+        for (int turn = 0; turn < 50; turn++)
+            brimming.RecoverNaturally();
+
+        Check(brimming.Hp <= brimming.MaxHp, $"최대치를 넘김: {brimming.Hp}/{brimming.MaxHp}");
+        Check(brimming.IsHpFull, "오래 쉬었는데 안 가득 참");
+
+        // 9) 가득 찬 채로 쉬어도 모아 두지 않는다. 모아 두면 다치자마자
+        //    쉬어 둔 만큼이 곧바로 붙는다.
+        var rested = new PlayerStats();
+        for (int turn = 0; turn < 20; turn++) rested.RecoverNaturally();
+
+        rested.TakeDamage(5);
+        Check(rested.RecoverNaturally() <= 1,
+              "가득 찬 동안 모아 둔 것이 다치자마자 한꺼번에 붙음");
+
+        Console.WriteLine(
+            "  힘 8 딱 1.0 · 힘 7 안 멈춤 · 비례 · 힘 0 · 정수 유지 · 쌓기 · 최대치 검사 완료");
+    }
+
     // ── 엑셀 표에서 읽어 온 줄을 옮겨 담기, 그리고 상태 화면 ───────────────
     //
     // 엑셀은 사람이 손으로 채우는 곳이라 칸 끝에 탭·공백이 남고, 오타도 난다.
@@ -1158,14 +1309,20 @@ static class Program
 
         // 3) 칸 끝의 탭·공백을 털어 낸다.
         Check(defs[1].Name == "박쥐", $"이름의 탭이 안 지워짐: '{defs[1].Name}'");
-        Check(defs[1].Rate == SpawnRate.High, "공백이 붙은 '상 ' 을 못 알아봄");
+        Check(defs[1].Rate == ItemDropRate.High, "공백이 붙은 '상 ' 을 못 알아봄");
 
-        // 4) 빈도 세 가지.
-        Check(defs[0].Rate == SpawnRate.Medium, "'중' 을 못 알아봄");
-        Check(defs[3].Rate == SpawnRate.Low, "'하' 를 못 알아봄");
+        // 4) 드롭 확률 세 가지.
+        Check(defs[0].Rate == ItemDropRate.Medium, "'중' 을 못 알아봄");
+        Check(defs[3].Rate == ItemDropRate.Low, "'하' 를 못 알아봄");
 
-        // 5) 모르는 빈도는 '중' 으로 두되 무엇이 이상한지 알려 준다.
-        Check(defs[2].Rate == SpawnRate.Medium, "모르는 빈도가 '중' 이 아님");
+        // 5) 모르는 값은 '중' 으로 두되 무엇이 이상한지 알려 준다.
+        Check(defs[2].Rate == ItemDropRate.Medium, "모르는 드롭 확률이 '중' 이 아님");
+
+        // 6) 보여 주는 글자는 시트에 적는 글자와 같아야 한다. 도감에서 '상' 을 본
+        //    사람이 시트를 열면 같은 칸을 바로 찾을 수 있어야 한다.
+        Check(MonsterSheet.NameOf(ItemDropRate.High) == "상", "드롭 확률 '상' 의 표시가 다름");
+        Check(MonsterSheet.NameOf(ItemDropRate.Medium) == "중", "드롭 확률 '중' 의 표시가 다름");
+        Check(MonsterSheet.NameOf(ItemDropRate.Low) == "하", "드롭 확률 '하' 의 표시가 다름");
         Check(problems.Count == 2, $"이상한 줄을 {problems.Count}건 알림 (기대 2)");
 
         bool toldRate = false, toldName = false;
@@ -1865,6 +2022,544 @@ static class Program
         Check(book.IsEmpty, "비웠는데 남아 있음");
 
         Console.WriteLine("  모양 셋 · 색 여덟 · 태그 닫힘 · 지우기 · 종류 단위 수첩 검사 완료");
+    }
+
+    // ── 아이템 도감 ──────────────────────────────────────────────────────────
+    static void TestItemEncyclopedia()
+    {
+        Console.WriteLine("[아이템 도감]");
+
+        var book = new ItemEncyclopedia();
+
+        // 1) 적기 전에는 아무것도 모른다.
+        Check(!book.IsDiscovered(101), "적지 않았는데 알고 있다고 함");
+
+        // 2) 처음 적으면 true(새로 안 것), 같은 것을 다시 적으면 false(이미 알던 것).
+        Check(book.Record(101), "처음 적었는데 false");
+        Check(book.IsDiscovered(101), "적었는데 모른다고 함");
+        Check(!book.Record(101), "같은 것을 다시 적었는데 true");
+
+        // 3) 번호 0(정의가 연결되지 않은 아이템)은 받지 않는다. MarkBook 과 같은 이유다.
+        Check(!book.Record(0), "번호 0 을 적음");
+        Check(!book.IsDiscovered(0), "번호 0 이 안다고 함");
+
+        // 4) 저장한 글자를 되살리면 같은 내용이 나온다.
+        book.Record(205);
+        book.Record(9);
+        string saved = book.Save();
+        ItemEncyclopedia restored = ItemEncyclopedia.Load(saved);
+        Check(restored.IsDiscovered(101) && restored.IsDiscovered(205) && restored.IsDiscovered(9),
+              "저장했다가 불러온 뒤 내용이 달라짐");
+        Check(!restored.IsDiscovered(999), "적지 않은 것이 불러온 뒤 생김");
+
+        // 5) 빈 글자·엉뚱한 글자를 불러와도 죽지 않고, 알아볼 수 있는 조각만 챙긴다.
+        Check(!ItemEncyclopedia.Load("").IsDiscovered(1), "빈 글자를 불러오다 죽음");
+        Check(!ItemEncyclopedia.Load(null).IsDiscovered(1), "null 을 불러오다 죽음");
+        ItemEncyclopedia garbage = ItemEncyclopedia.Load("abc,,12,xyz");
+        Check(garbage.IsDiscovered(12), "섞인 글자 속 멀쩡한 번호까지 놓침");
+
+        // ── 목록 화면 ────────────────────────────────────────────────────────
+        var entries = new List<ItemDefinition>
+        {
+            new ItemDefinition { Id = 30, Name = "지팡이" },
+            new ItemDefinition { Id = 10, Name = "사과" },
+            new ItemDefinition { Id = 20, Name = "물약" },
+        };
+
+        // 6) 번호(id)가 작은 순서로 늘어선다. 입력 순서와는 상관없다.
+        List<ItemDefinition> sorted = ItemEncyclopediaReport.SortedEntries(entries);
+        Check(sorted[0].Id == 10 && sorted[1].Id == 20 && sorted[2].Id == 30,
+              "id 순서대로 정렬되지 않음");
+
+        var dex = new ItemEncyclopedia();
+        dex.Record(10);
+        dex.Record(30);
+        // 20(물약)은 적지 않았다 — 아직 못 만나 본 것으로 남는다.
+
+        // 7) 만나 본 것은 이름이, 아닌 것은 물음표가 나온다. 번호는 몇 번째인지(No.)다.
+        string text = ItemEncyclopediaReport.BuildText(sorted, dex, selected: 0, offset: 0, capacity: 10);
+        string[] lines = text.Split('\n');
+        Check(lines.Length == 3, $"줄 수가 3이 아님: {lines.Length}");
+        Check(lines[0].Contains("1. 사과"), $"첫 줄이 이상함: {lines[0]}");
+        Check(lines[1].Contains("2. ?"), $"둘째 줄(못 만난 것)이 이상함: {lines[1]}");
+        Check(lines[2].Contains("3. 지팡이"), $"셋째 줄이 이상함: {lines[2]}");
+
+        // 8) 고른 줄에만 커서가 붙는다.
+        Check(lines[0].StartsWith("> ") && !lines[1].StartsWith("> "), "커서가 고른 줄에 붙지 않음");
+
+        // 9) capacity 만큼만, offset 번째부터 잘라 보여 준다.
+        string page = ItemEncyclopediaReport.BuildText(sorted, dex, selected: 1, offset: 1, capacity: 1);
+        Check(page == "> 2. ?", $"한 줄만 자르는 페이지가 이상함: {page}");
+
+        // ── 페이지로 넘겨 보기 ──────────────────────────────────────────────
+        //
+        // 도감 셋이 같은 반복문을 쓰므로(StatusScreen.BrowseEncyclopedia) 여기서
+        // 한 번 확인하면 셋 다 확인한 셈이다.
+        //
+        // 여기서 조용히 어긋나는 것은 <b>위/아래가 페이지를 넘어가 버리는</b> 것이다.
+        // 넘어가도 화면은 멀쩡히 그려지고, 페이지를 나눈 뜻만 사라진다.
+
+        // 10) 페이지 수. 딱 떨어지지 않으면 한 장 더, 비어 있어도 한 장.
+        Check(PageScroll.PageCount(10, 5) == 2, "10줄 5칸이 2페이지가 아님");
+        Check(PageScroll.PageCount(11, 5) == 3, "11줄 5칸이 3페이지가 아님");
+        Check(PageScroll.PageCount(0, 5) == 1, "빈 목록이 0페이지");
+        Check(PageScroll.PageCount(7, 0) == 1, "capacity 0 인데 1페이지가 아님");
+
+        // 11) 마지막 페이지는 덜 찬다.
+        Check(PageScroll.RowsOnPage(0, 11, 5) == 5, "첫 페이지가 안 참");
+        Check(PageScroll.RowsOnPage(2, 11, 5) == 1, "마지막 페이지 줄 수가 어긋남");
+
+        // 12) 페이지 번호는 있는 범위 안으로 되돌아온다.
+        Check(PageScroll.ClampPage(9, 11, 5) == 2, "끝을 넘겨도 안 붙잡힘");
+        Check(PageScroll.ClampPage(-3, 11, 5) == 0, "앞을 넘겨도 안 붙잡힘");
+
+        // 13) 위/아래는 <b>페이지 안에서만</b> 돈다. 첫 줄에서 위로 가면 그 페이지의
+        //     끝 줄로, 끝 줄에서 아래로 가면 그 페이지의 첫 줄로.
+        Check(PageScroll.StepWithinPage(selected: 5, step: 1, page: 1, count: 11, capacity: 5) == 6,
+              "페이지 안에서 한 줄 못 내려감");
+        Check(PageScroll.StepWithinPage(selected: 9, step: 1, page: 1, count: 11, capacity: 5) == 5,
+              "페이지 끝에서 다음 페이지로 넘어감");
+        Check(PageScroll.StepWithinPage(selected: 5, step: -1, page: 1, count: 11, capacity: 5) == 9,
+              "페이지 첫 줄에서 이전 페이지로 넘어감");
+
+        // 14) 덜 찬 마지막 페이지에서도 그 안에서만 돈다.
+        Check(PageScroll.StepWithinPage(selected: 10, step: 1, page: 2, count: 11, capacity: 5) == 10,
+              "한 줄뿐인 페이지에서 벗어남");
+
+        // 15) 창 크기가 바뀌어 커서가 페이지 밖에 있으면 그 페이지 첫 줄로 되돌린다.
+        Check(PageScroll.StepWithinPage(selected: 99, step: 1, page: 0, count: 11, capacity: 5) == 0,
+              "페이지 밖 커서가 안 되돌아옴");
+
+        Console.WriteLine("  수첩 기록 · 저장/불러오기 · 정렬 · 물음표 가리기 · 페이지 넘기기 검사 완료");
+    }
+
+    // ── 적 도감 ──────────────────────────────────────────────────────────────
+    //
+    // 여기서 조용히 어긋나기 쉬운 것은 <b>문턱</b>이다. 3마리에 열리기로 한 것이
+    // 4마리에 열려도 에러가 나지 않고, 표를 고친 사람은 열어 보기 전까지 모른다.
+    // 그래서 경계(문턱 직전 · 문턱 정확히)를 짚어 둔다.
+    static void TestEnemyEncyclopedia()
+    {
+        Console.WriteLine("[적 도감]");
+
+        var book = new EnemyEncyclopedia();
+        const int zombie = 10001;
+        const int bat = 10002;
+
+        // 1) 적기 전에는 0 이고, 목록에서 가려진다.
+        Check(book.DefeatsOf(zombie) == 0, "적지 않았는데 횟수가 있음");
+        Check(!book.IsDiscovered(zombie), "적지 않았는데 안다고 함");
+
+        // 2) 쓰러뜨릴 때마다 하나씩 늘고, 적고 난 뒤의 횟수를 돌려준다.
+        Check(book.Record(zombie) == 1, "첫 마리의 횟수가 1 이 아님");
+        Check(book.Record(zombie) == 2, "둘째 마리의 횟수가 2 가 아님");
+        Check(book.DefeatsOf(zombie) == 2, "쌓은 횟수가 어긋남");
+        Check(book.IsDiscovered(zombie), "쓰러뜨렸는데 모른다고 함");
+
+        // 3) 종류마다 따로 센다. 한 종류를 잡았다고 다른 종류가 열리면 안 된다.
+        Check(book.DefeatsOf(bat) == 0, "다른 종류에까지 횟수가 번짐");
+
+        // 4) 번호 0(정의가 연결되지 않은 적)은 받지 않는다. MarkBook 과 같은 규칙이다.
+        Check(book.Record(0) == 0, "번호 0 을 적음");
+        Check(!book.IsDiscovered(0), "번호 0 이 안다고 함");
+
+        // 5) 저장했다가 되살리면 횟수까지 그대로다.
+        book.Record(bat);
+        EnemyEncyclopedia restored = EnemyEncyclopedia.Load(book.Save());
+        Check(restored.DefeatsOf(zombie) == 2, "불러온 뒤 횟수가 달라짐");
+        Check(restored.DefeatsOf(bat) == 1, "불러온 뒤 다른 종류의 횟수가 달라짐");
+        Check(restored.DefeatsOf(99999) == 0, "적지 않은 것이 불러온 뒤 생김");
+
+        // 6) 빈 글자·엉뚱한 글자를 불러와도 죽지 않고, 알아볼 수 있는 조각만 챙긴다.
+        Check(EnemyEncyclopedia.Load("").DefeatsOf(1) == 0, "빈 글자를 불러오다 죽음");
+        Check(EnemyEncyclopedia.Load(null).DefeatsOf(1) == 0, "null 을 불러오다 죽음");
+        EnemyEncyclopedia garbage = EnemyEncyclopedia.Load("abc,7:3,,9:x,0:5,11:0");
+        Check(garbage.DefeatsOf(7) == 3, "섞인 글자 속 멀쩡한 줄까지 놓침");
+        Check(garbage.DefeatsOf(9) == 0, "횟수가 글자인 줄을 받아들임");
+        Check(garbage.DefeatsOf(0) == 0, "번호 0 인 줄을 받아들임");
+        Check(garbage.DefeatsOf(11) == 0, "횟수 0 인 줄을 받아들임");
+
+        // ── 쓰러뜨린 만큼 열리는 중단 ────────────────────────────────────────
+
+        var definition = new MonsterDefinition
+        {
+            Id = zombie,
+            Name = "걸어다니는 시체",
+            Hp = 12, Attack = 5, Defense = 2, Exp = 7,
+            Rate = ItemDropRate.High,
+            Category = "몬스터",
+            Description = "발견하면 다가 오겠어",
+        };
+
+        // 7) 문턱이 같은 것끼리 한 줄로 묶이므로 <b>여섯 항목이 세 줄</b>로 뜬다.
+        //    몇 마리를 잡았든 줄 수는 그대로다 — 안 열린 줄이 사라지면
+        //    더 볼 것이 있다는 사실 자체가 안 보인다.
+        foreach (int defeats in new[] { 0, 3, 5, 10, 99 })
+        {
+            string[] lines = EnemyEncyclopediaReport.BuildStatsText(definition, defeats).Split('\n');
+            Check(lines.Length == 3, $"{defeats}마리일 때 줄 수가 3 이 아님: {lines.Length}");
+        }
+
+        // 같이 열리는 것이 정말 <b>같은 줄</b>에 있는가. 한 줄에 둘 다 들어 있어야 한다.
+        string[] grouped = EnemyEncyclopediaReport.BuildStatsText(definition, 10).Split('\n');
+        Check(grouped[0].Contains("체력") && grouped[0].Contains("공격력"),
+              $"체력과 공격력이 한 줄이 아님: {grouped[0]}");
+        Check(grouped[1].Contains("방어력") && grouped[1].Contains("경험치"),
+              $"방어력과 경험치가 한 줄이 아님: {grouped[1]}");
+        Check(grouped[2].Contains("드롭 확률") && grouped[2].Contains("종족"),
+              $"드롭 확률과 종족이 한 줄이 아님: {grouped[2]}");
+
+        // 문턱이 다른 것이 같은 줄에 섞이면 안 된다.
+        Check(!grouped[0].Contains("방어력"), $"문턱이 다른 항목이 첫 줄에 섞임: {grouped[0]}");
+
+        // 8) 문턱 <b>직전</b>에는 가려져 있다. 3·5·10 각각의 바로 앞을 짚는다.
+        string before3 = EnemyEncyclopediaReport.BuildStatsText(definition, 2);
+        Check(before3.Contains("체력 : " + EnemyEncyclopediaReport.HiddenValue), "2마리인데 체력이 열림");
+        Check(before3.Contains("공격력 : " + EnemyEncyclopediaReport.HiddenValue), "2마리인데 공격력이 열림");
+
+        string at3 = EnemyEncyclopediaReport.BuildStatsText(definition, 3);
+        Check(at3.Contains("체력 : 12"), "3마리인데 체력이 안 열림");
+        Check(at3.Contains("공격력 : 5"), "3마리인데 공격력이 안 열림");
+        Check(at3.Contains("방어력 : " + EnemyEncyclopediaReport.HiddenValue), "3마리인데 방어력이 열림");
+
+        string at5 = EnemyEncyclopediaReport.BuildStatsText(definition, 5);
+        Check(at5.Contains("방어력 : 2"), "5마리인데 방어력이 안 열림");
+        Check(at5.Contains("경험치 : 7"), "5마리인데 경험치가 안 열림");
+        Check(at5.Contains("종족 : " + EnemyEncyclopediaReport.HiddenValue), "5마리인데 종족이 열림");
+
+        string at10 = EnemyEncyclopediaReport.BuildStatsText(definition, 10);
+        Check(at10.Contains("드롭 확률 : 상"), "10마리인데 드롭 확률이 안 열림");
+        Check(at10.Contains("종족 : 몬스터"), "10마리인데 종족이 안 열림");
+        Check(!at10.Contains(EnemyEncyclopediaReport.HiddenValue), "10마리인데 아직 가려진 줄이 있음");
+
+        // 9) 가려진 항목에는 값 말고 아무것도 붙지 않는다.
+        Check(before3.StartsWith("체력 : " + EnemyEncyclopediaReport.HiddenValue),
+              $"가려진 항목에 군더더기가 붙음: {before3}");
+
+        // 10) 문턱은 오름차순이어야 한다. 뒤 항목이 앞 항목보다 먼저 열리면
+        //     "순차적으로 열린다" 가 성립하지 않고, 줄 묶기도 흩어진다.
+        int previous = 0;
+        foreach (FactRow<MonsterDefinition> row in EnemyEncyclopediaReport.Rows)
+        {
+            Check(row.Required >= previous, $"'{row.Label}' 의 문턱({row.Required})이 앞 항목보다 낮음");
+            Check(row.Required > 0, $"'{row.Label}' 이 처음부터 열려 있음");
+            previous = row.Required;
+        }
+
+        // 11) 종족이 비어 있어도 빈칸이 아니라 '-' 로 채운다.
+        var noCategory = new MonsterDefinition { Id = 1, Name = "이름", Category = "" };
+        Check(EnemyEncyclopediaReport.BuildStatsText(noCategory, 10).Contains("종족 : -"),
+              "종족이 빈칸인데 자리를 안 채움");
+
+        // ── 목록과 상단 ──────────────────────────────────────────────────────
+
+        var entries = new List<MonsterDefinition>
+        {
+            new MonsterDefinition { Id = 30, Name = "슬라임" },
+            new MonsterDefinition { Id = 10, Name = "걸어다니는 시체" },
+        };
+
+        List<MonsterDefinition> sorted = EnemyEncyclopediaReport.SortedEntries(entries);
+        Check(sorted[0].Id == 10 && sorted[1].Id == 30, "id 순서대로 정렬되지 않음");
+
+        var dex = new EnemyEncyclopedia();
+        dex.Record(10);
+
+        string list = EnemyEncyclopediaReport.BuildListText(sorted, dex, 0, 0, 10);
+        string[] listLines = list.Split('\n');
+        Check(listLines[0] == "> 1. 걸어다니는 시체", $"첫 줄이 이상함: {listLines[0]}");
+        Check(listLines[1] == "  2. ?", $"못 쓰러뜨린 줄이 이상함: {listLines[1]}");
+
+        // 12) 상단은 목록에서의 번호를 그대로 쓴다.
+        Check(EnemyEncyclopediaReport.BuildTitle(1, sorted[0]) == "No.1  걸어다니는 시체",
+              "상단 줄이 이상함");
+        Check(EnemyEncyclopediaReport.BuildDefeatCount(12) == "쓰러뜨린 횟수 : 12",
+              "쓰러뜨린 횟수 줄이 이상함");
+
+        Console.WriteLine("  횟수 세기 · 저장/불러오기 · 문턱 3/5/10 경계 · 목록 가리기 검사 완료");
+    }
+
+    // ── 동료 도감 ────────────────────────────────────────────────────────────
+    //
+    // 적 도감과 짜임이 같지만 <b>0 을 다루는 규칙이 반대다.</b> 적은 횟수 0 이
+    // "아직 안 잡았다" 라 버리는 값이고, 동료는 호감도 0 이 "만났지만 아직 안 쌓였다"
+    // 라 <b>멀쩡한 값</b>이다. 적 쪽 규칙을 그대로 옮겨 오면 만난 동료가 통째로
+    // 사라지는데, 그래도 에러는 나지 않는다. 그래서 그 경계를 짚어 둔다.
+    static void TestPartnerEncyclopedia()
+    {
+        Console.WriteLine("[동료 도감]");
+
+        var book = new PartnerEncyclopedia();
+        const int adventurer = 1;
+        const int swordsman = 2;
+
+        // 1) 만나기 전에는 가려져 있다.
+        Check(!book.IsDiscovered(adventurer), "만나지 않았는데 안다고 함");
+        Check(book.AffinityOf(adventurer) == 0, "만나지 않았는데 호감도가 있음");
+
+        // 2) 동행하면 목록에 뜨고, 호감도는 0 에서 시작한다.
+        Check(book.RecordMet(adventurer), "처음 만났는데 false");
+        Check(book.IsDiscovered(adventurer), "만났는데 모른다고 함");
+        Check(book.AffinityOf(adventurer) == 0, "막 만났는데 호감도가 0 이 아님");
+
+        // 3) 다시 동행해도 쌓아 둔 호감도를 0 으로 되돌리지 않는다.
+        book.AddAffinity(adventurer, 7);
+        Check(!book.RecordMet(adventurer), "이미 아는 동료인데 true");
+        Check(book.AffinityOf(adventurer) == 7, "다시 만났다고 호감도가 지워짐");
+
+        // 4) 만난 적 없는 동료에게는 호감도가 붙지 않는다. 목록은 물음표인데
+        //    값만 차 있는 어긋난 상태가 되기 때문이다.
+        book.AddAffinity(swordsman, 5);
+        Check(!book.IsDiscovered(swordsman), "안 만난 동료가 호감도로 열림");
+        Check(book.AffinityOf(swordsman) == 0, "안 만난 동료에게 호감도가 붙음");
+
+        // 5) 번호 0 은 받지 않는다.
+        Check(!book.RecordMet(0), "번호 0 을 적음");
+
+        // 6) 저장했다가 되살리면 <b>호감도 0 인 동료도 남아 있어야 한다.</b>
+        //    여기가 적 도감과 갈리는 자리다.
+        book.RecordMet(swordsman);          // 호감도 0 인 채로 만난 동료
+        PartnerEncyclopedia restored = PartnerEncyclopedia.Load(book.Save());
+        Check(restored.IsDiscovered(swordsman), "호감도 0 인 동료가 불러온 뒤 사라짐");
+        Check(restored.AffinityOf(adventurer) == 7, "불러온 뒤 호감도가 달라짐");
+
+        // 7) 엉뚱한 글자는 건너뛴다. 음수 호감도도 받지 않는다.
+        PartnerEncyclopedia garbage = PartnerEncyclopedia.Load("abc,3:2,,4:x,0:5,5:-1");
+        Check(garbage.AffinityOf(3) == 2, "섞인 글자 속 멀쩡한 줄까지 놓침");
+        Check(!garbage.IsDiscovered(4), "호감도가 글자인 줄을 받아들임");
+        Check(!garbage.IsDiscovered(0), "번호 0 인 줄을 받아들임");
+        Check(!garbage.IsDiscovered(5), "음수 호감도를 받아들임");
+
+        // ── 호감도만큼 열리는 중단 ──────────────────────────────────────────
+
+        var definition = new PartnerDefinition
+        {
+            Id = adventurer,
+            Name = "모험가",
+            Hp = 20, Attack = 6, Defense = 3, BagSize = 4,
+            Gender = "남성",
+            Category = "인간",
+            Description = "어디에나 있는 모험가",
+        };
+
+        // 8) 시트의 일곱 항목이 문턱 셋으로 묶여 <b>세 줄</b>로 뜬다.
+        foreach (int affinity in new[] { 0, 5, 10, 99 })
+        {
+            string[] lines = PartnerEncyclopediaReport.BuildStatsText(definition, affinity).Split('\n');
+            Check(lines.Length == 3, $"호감도 {affinity} 일 때 줄 수가 3 이 아님: {lines.Length}");
+        }
+
+        // 같이 열리는 것이 정말 같은 줄에 있는가. 첫 줄에는 셋이 함께 온다.
+        string[] grouped = PartnerEncyclopediaReport.BuildStatsText(definition, 10).Split('\n');
+        Check(grouped[0].Contains("체력") && grouped[0].Contains("공격력") && grouped[0].Contains("방어력"),
+              $"체력·공격력·방어력이 한 줄이 아님: {grouped[0]}");
+        Check(grouped[1].Contains("가방 칸") && grouped[1].Contains("특성"),
+              $"가방 칸과 특성이 한 줄이 아님: {grouped[1]}");
+        Check(grouped[2].Contains("성별") && grouped[2].Contains("종족"),
+              $"성별과 종족이 한 줄이 아님: {grouped[2]}");
+        Check(!grouped[0].Contains("가방 칸"), $"문턱이 다른 항목이 첫 줄에 섞임: {grouped[0]}");
+
+        // 9) 첫 단계는 문턱이 0 이라 <b>만나기만 해도 보인다.</b> 호감도가 아직
+        //    오르지 않으므로(정하지 않았다) 이것이 0 이 아니면 중단이 통째로 물음표가 된다.
+        string atZero = PartnerEncyclopediaReport.BuildStatsText(definition, 0);
+        Check(atZero.Contains("체력 : 20"), "호감도 0 인데 체력이 안 보임");
+        Check(atZero.Contains("공격력 : 6"), "호감도 0 인데 공격력이 안 보임");
+        Check(atZero.Contains("방어력 : 3"), "호감도 0 인데 방어력이 안 보임");
+        Check(atZero.Contains("가방 칸 : " + PartnerEncyclopediaReport.HiddenValue),
+              "호감도 0 인데 가방 칸이 열림");
+
+        // 10) 문턱 직전과 정확히.
+        Check(PartnerEncyclopediaReport.BuildStatsText(definition, 4)
+                  .Contains("가방 칸 : " + PartnerEncyclopediaReport.HiddenValue),
+              "호감도 4 인데 가방 칸이 열림");
+        Check(PartnerEncyclopediaReport.BuildStatsText(definition, 5).Contains("가방 칸 : 4"),
+              "호감도 5 인데 가방 칸이 안 열림");
+
+        string at9 = PartnerEncyclopediaReport.BuildStatsText(definition, 9);
+        Check(at9.Contains("성별 : " + PartnerEncyclopediaReport.HiddenValue), "호감도 9 인데 성별이 열림");
+
+        string at10 = PartnerEncyclopediaReport.BuildStatsText(definition, 10);
+        Check(at10.Contains("성별 : 남성"), "호감도 10 인데 성별이 안 열림");
+        Check(at10.Contains("종족 : 인간"), "호감도 10 인데 종족이 안 열림");
+        Check(!at10.Contains(PartnerEncyclopediaReport.HiddenValue), "호감도 10 인데 가려진 줄이 있음");
+
+        // 11) 문턱은 오름차순이어야 순서대로 열리고, 줄 묶기도 흩어지지 않는다.
+        int previous = -1;
+        foreach (FactRow<PartnerDefinition> row in PartnerEncyclopediaReport.Rows)
+        {
+            Check(row.Required >= previous, $"'{row.Label}' 의 문턱({row.Required})이 앞 항목보다 낮음");
+            previous = row.Required;
+        }
+
+        // 12) 특성이 없으면 빈칸이 아니라 '-' 로 채운다.
+        var bare = new PartnerDefinition { Id = 9, Name = "이름" };
+        string bareText = PartnerEncyclopediaReport.BuildStatsText(bare, 10);
+        Check(bareText.Contains("특성 : -"), $"특성이 없는데 자리를 안 채움: {bareText}");
+        Check(bareText.Contains("성별 : -"), "성별이 빈칸인데 자리를 안 채움");
+
+        // ── 목록과 상단 ──────────────────────────────────────────────────────
+
+        var entries = new List<PartnerDefinition>
+        {
+            new PartnerDefinition { Id = 30, Name = "검객" },
+            new PartnerDefinition { Id = 10, Name = "모험가" },
+        };
+
+        List<PartnerDefinition> sorted = PartnerEncyclopediaReport.SortedEntries(entries);
+        Check(sorted[0].Id == 10 && sorted[1].Id == 30, "id 순서대로 정렬되지 않음");
+
+        var dex = new PartnerEncyclopedia();
+        dex.RecordMet(10);
+
+        // 호감도가 0 이어도 만난 동료는 목록에 이름이 떠야 한다.
+        string list = PartnerEncyclopediaReport.BuildListText(sorted, dex, 0, 0, 10);
+        string[] listLines = list.Split('\n');
+        Check(listLines[0] == "> 1. 모험가", $"첫 줄이 이상함: {listLines[0]}");
+        Check(listLines[1] == "  2. ?", $"못 만난 줄이 이상함: {listLines[1]}");
+
+        Check(PartnerEncyclopediaReport.BuildTitle(1, sorted[0]) == "No.1  모험가", "상단 줄이 이상함");
+        Check(PartnerEncyclopediaReport.BuildAffinity(7) == "호감도 : 7", "호감도 줄이 이상함");
+
+        Console.WriteLine("  만남 기록 · 호감도 0 살아남기 · 문턱 0/5/10 경계 · 빈칸 채우기 검사 완료");
+    }
+
+    // ── 점수와 기록 ──────────────────────────────────────────────────────────
+    //
+    // 점수는 <b>모험이 끝나는 순간 한 번</b>만 매겨지고 그 뒤 씬이 다시 불러와지므로,
+    // 어긋나도 다시 확인할 길이 없다. 특히 1층에서 죽었을 때 500 점이 붙거나
+    // 소지금 한도가 안 걸리는 것은 화면만 봐서는 맞는지 알 수 없다.
+    static void TestRunScore()
+    {
+        Console.WriteLine("[점수와 기록]");
+
+        // 1) 1층에서 죽으면 층수 몫은 0 이다. (도달 층수 - 1) 이라 그렇다 —
+        //    여기를 stage 그대로 두면 시작하자마자 죽어도 500 점을 준다.
+        RunScore first = RunScore.Of(stage: 1, gold: 0, itemSellTotal: 0, cleared: false);
+        Check(first.StagePoints == 0, $"1층인데 층수 몫이 {first.StagePoints}");
+        Check(first.Total == 0, $"빈손으로 1층에서 죽었는데 {first.Total} 점");
+
+        // 2) 층마다 500 점씩.
+        Check(RunScore.Of(2, 0, 0, false).StagePoints == 500, "2층이 500 이 아님");
+        Check(RunScore.Of(11, 0, 0, false).StagePoints == 5000, "11층이 5000 이 아님");
+
+        // 3) 네 몫이 그대로 더해진다.
+        RunScore mixed = RunScore.Of(stage: 5, gold: 1200, itemSellTotal: 800, cleared: false);
+        Check(mixed.StagePoints == 2000, $"층수 몫이 어긋남: {mixed.StagePoints}");
+        Check(mixed.GoldPoints == 1200, $"소지금 몫이 어긋남: {mixed.GoldPoints}");
+        Check(mixed.ItemPoints == 800, $"매각 몫이 어긋남: {mixed.ItemPoints}");
+        Check(mixed.ClearPoints == 0, "클리어 안 했는데 보너스가 붙음");
+        Check(mixed.Total == 4000, $"총점이 어긋남: {mixed.Total}");
+
+        // 4) 소지금은 999,999 에서 끊긴다. 경계 바로 앞·정확히·넘어선 자리를 짚는다.
+        Check(RunScore.Of(1, RunScore.GoldCap - 1, 0, false).GoldPoints == RunScore.GoldCap - 1,
+              "한도 직전인데 깎임");
+        Check(RunScore.Of(1, RunScore.GoldCap, 0, false).GoldPoints == RunScore.GoldCap,
+              "한도 정확히인데 깎임");
+        Check(RunScore.Of(1, RunScore.GoldCap + 1, 0, false).GoldPoints == RunScore.GoldCap,
+              "한도를 넘겼는데 안 깎임");
+        Check(RunScore.Of(1, int.MaxValue, 0, false).GoldPoints == RunScore.GoldCap,
+              "아주 큰 소지금이 한도에서 안 끊김");
+
+        // 5) 매각 가격에는 한도가 없다. 소지금 한도를 여기까지 잘못 적용하기 쉽다.
+        Check(RunScore.Of(1, 0, RunScore.GoldCap + 5000, false).ItemPoints == RunScore.GoldCap + 5000,
+              "매각 가격에까지 소지금 한도가 걸림");
+
+        // 6) 클리어하면 고정 보너스가 붙는다.
+        RunScore cleared = RunScore.Of(stage: 30, gold: 500, itemSellTotal: 300, cleared: true);
+        Check(cleared.ClearPoints == RunScore.ClearBonus, "클리어했는데 보너스가 없음");
+        Check(cleared.Total == 500 * 29 + 500 + 300 + RunScore.ClearBonus,
+              $"클리어 총점이 어긋남: {cleared.Total}");
+
+        // 7) 음수가 들어와도 점수를 깎지 않는다.
+        RunScore odd = RunScore.Of(stage: 0, gold: -100, itemSellTotal: -50, cleared: false);
+        Check(odd.Total == 0, $"음수가 총점을 깎음: {odd.Total}");
+
+        // 8) 내역에는 받은 것만 적힌다. 못 받은 클리어 보너스를 0 으로 적어 두면
+        //    매번 못 받은 것을 확인시키는 꼴이 된다.
+        Check(!mixed.BuildBreakdown().Contains("클리어 보너스"), "못 받은 클리어 보너스가 적힘");
+        Check(cleared.BuildBreakdown().Contains("클리어 보너스"), "받은 클리어 보너스가 안 적힘");
+        Check(mixed.BuildBreakdown().Contains("총점 : 4000"), "총점이 내역에 없음");
+
+        // ── 기록 수첩 ────────────────────────────────────────────────────────
+        //
+        // 여기서 조용히 어긋나는 것은 <b>"한 번도 없었다" 와 "0" 이 뭉개지는</b> 것이다.
+        // 0 으로 채워 두면 아직 안 해 본 것과 해 봤지만 0 인 것이 화면에서 같아 보인다.
+
+        var book = new RecordBook();
+        Check(book.IsEmpty, "새 수첩에 기록이 있음");
+
+        // 9) 적기 전에는 물음표로 뜬다.
+        Check(!book.Has(RecordStat.BiggestHitDealt), "적지 않았는데 있다고 함");
+        Check(book.BuildText(0, 99).Contains("가장 크게 준 피해 : ?"),
+              $"안 적힌 기록이 물음표가 아님: {book.BuildText(0, 99)}");
+
+        // 10) Max 는 <b>첫 값이면 0 이어도 적힌다.</b> 크기만 견주면 처음 것이
+        //     조용히 안 적혀서, 0 을 기록한 판이 영영 물음표로 남는다.
+        Check(book.Report(RecordStat.BiggestHitDealt, 0), "첫 값 0 이 안 적힘");
+        Check(book.Has(RecordStat.BiggestHitDealt), "적었는데 없다고 함");
+        Check(book.BuildText(0, 99).Contains("가장 크게 준 피해 : 0"), "적은 0 이 안 보임");
+
+        // 11) Max 는 더 큰 값만 남긴다.
+        Check(book.Report(RecordStat.BiggestHitDealt, 12), "더 큰 값이 안 적힘");
+        Check(!book.Report(RecordStat.BiggestHitDealt, 5), "더 작은 값이 최고 기록이 됨");
+        Check(book.ValueOf(RecordStat.BiggestHitDealt) == 12,
+              $"최고값이 덮임: {book.ValueOf(RecordStat.BiggestHitDealt)}");
+
+        // 같은 값을 다시 넣어도 최고 기록을 새로 세운 것은 아니다.
+        Check(!book.Report(RecordStat.BiggestHitDealt, 12), "같은 값이 새 기록으로 셈됨");
+
+        // 12) Total 은 더한다. 0 이나 음수로 기록을 깎을 수는 없다.
+        book.Report(RecordStat.TrapsTriggered, 1);
+        book.Report(RecordStat.TrapsTriggered, 1);
+        Check(book.ValueOf(RecordStat.TrapsTriggered) == 2, "누적이 안 됨");
+        Check(!book.Report(RecordStat.TrapsTriggered, 0), "0 이 누적으로 받아들여짐");
+        Check(!book.Report(RecordStat.TrapsTriggered, -5), "음수가 기록을 깎음");
+        Check(book.ValueOf(RecordStat.TrapsTriggered) == 2, "음수가 누적을 바꿈");
+
+        // 13) Last 는 작아져도 덮는다. Max 와 헷갈리기 쉬운 자리다.
+        book.Report(RecordStat.LastScore, 4000);
+        book.Report(RecordStat.LastScore, 500);
+        Check(book.ValueOf(RecordStat.LastScore) == 500, "지난 값이 안 덮임");
+
+        // 14) 저장했다가 되살리면 그대로다. 적지 않은 것은 여전히 물음표다.
+        RecordBook restored = RecordBook.Load(book.Save());
+        Check(restored.ValueOf(RecordStat.BiggestHitDealt) == 12, "불러온 뒤 최고값이 달라짐");
+        Check(restored.ValueOf(RecordStat.TrapsTriggered) == 2, "불러온 뒤 누적이 달라짐");
+        Check(restored.ValueOf(RecordStat.LastScore) == 500, "불러온 뒤 지난 값이 달라짐");
+        Check(!restored.Has(RecordStat.FoodEaten), "안 적은 것이 불러온 뒤 생김");
+
+        // 15) 0 으로 적어 둔 것도 살아남아야 한다. 저장할 때 0 을 빼 버리면
+        //     불러온 뒤 물음표로 되돌아간다.
+        Check(restored.Has(RecordStat.BiggestHitDealt) || book.ValueOf(RecordStat.BiggestHitDealt) != 0,
+              "0 인 기록이 저장에서 빠짐");
+        var zeroOnly = new RecordBook();
+        zeroOnly.Report(RecordStat.BiggestHitTaken, 0);
+        Check(RecordBook.Load(zeroOnly.Save()).Has(RecordStat.BiggestHitTaken),
+              "0 인 기록이 불러온 뒤 사라짐");
+
+        // 16) 못 읽는 조각과 모르는 이름은 건너뛰되 나머지는 챙긴다. 모르는 이름은
+        //     지워진 옛 항목이라, 그것 때문에 기록을 통째로 버리면 안 된다.
+        RecordBook mixedSave = RecordBook.Load("traps=3,없는항목=9,food,gold.most=x,deaths=2");
+        Check(mixedSave.ValueOf(RecordStat.TrapsTriggered) == 3, "멀쩡한 줄까지 놓침");
+        Check(mixedSave.ValueOf(RecordStat.Deaths) == 2, "모르는 이름 뒤의 줄을 놓침");
+        Check(!mixedSave.Has(RecordStat.MostGold), "숫자가 아닌 값을 받아들임");
+        Check(RecordBook.Load("").IsEmpty, "빈 글자를 불러오다 죽음");
+        Check(RecordBook.Load(null).IsEmpty, "null 을 불러오다 죽음");
+
+        // 17) 표의 이름은 서로 겹치면 안 된다. 겹치면 저장할 때 한쪽이 다른 쪽을 덮는다.
+        var ids = new HashSet<string>();
+        foreach (RecordDefinition definition in RecordCatalog.All)
+        {
+            Check(ids.Add(definition.Id), $"기록 이름이 겹침: {definition.Id}");
+            Check(RecordCatalog.Find(definition.Stat) == definition,
+                  $"{definition.Id} 를 stat 으로 못 찾음");
+            Check(RecordCatalog.Find(definition.Id) == definition,
+                  $"{definition.Id} 를 이름으로 못 찾음");
+        }
+
+        Console.WriteLine(
+            "  층수 500 · 소지금 한도 경계 · 매각 무한도 · 클리어 보너스 · " +
+            "물음표와 0 가르기 · Max/Total/Last · 이름 저장 검사 완료");
     }
 
     // ── 가방 정리 차례 ──────────────────────────────────────────────────────
