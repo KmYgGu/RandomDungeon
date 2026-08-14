@@ -20,7 +20,7 @@ dotnet build Tools/Check/Check.csproj --no-incremental
 
 **에러 0 / 경고 0 이 기준선이다.** 자세한 내용은 [Tools/README.md](Tools/README.md).
 
-현재 상태: **에러 0 · 경고 0 · 31종 ALL PASS**
+현재 상태: **에러 0 · 경고 0 · 40종 ALL PASS**
 
 이 환경은 Unity 에디터 없이 게임 코드를 컴파일하고 순수 계산 부분을 실제로 돌려 본다.
 `Tools/` 는 git 에 들어가 있다(`.gitignore` 의 `!Tools/**/*.csproj` 줄을 지우지 말 것).
@@ -123,6 +123,13 @@ for f in glob.glob('Assets/Code/**/*.cs',recursive=True):
 | 정의 애셋 | `ItemDescription` `TrapDescription` `MonsterDescription` — **번호와 그림만** 넣으면 나머지는 시트에서 |
 | Dungeon | `RoomLayoutBuilder` `RoomGraph` `CorridorCarver` `CorridorThinner` `DungeonTilePainter` `DungeonPopulator` `WaterwayDecorator` `DungeonLayout` `RoomInfo` |
 | UI | `HudView` `MessageBoxView` `PanelView` `BagMenuController` `StatusView` `StatusMenu` `StatusMenuController` `StarvingTint` |
+| 늘어날 것들의 표 | `ItemEffects`(아이템) `TrapActions`(함정) `TraitEffects`(특성) `ConditionRules`(상태이상) — **늘릴 때 고칠 곳은 표 하나** |
+| 아이템 조작 | `ItemCommands` — 가방 화면·발밑 명령·줍기·교환·던지기·장착. `GameManager` 에서 400줄을 떼어 낸 것 |
+| 강제 이동 | `ForcedMoves` — 구멍·워프·날리기와 그 결말. 함정 전용이 아니라 지팡이·능력도 부른다 |
+| 턴 흐름 | `TurnLoop` — 플레이어 뒤의 한 턴(동료 → 적 → 만복도 → 자연 회복) |
+| 상태창 | `StatusScreen` — 상태·로그. **도감·기록·중단이 늘어날 자리** |
+| 동료 | `PartnerRoster`(명단) `PartnerPlan`(판단) `Partner`(실행) `PartnerSheet` `TraitSheet` `PartnerLineSheet` |
+| **적·동료 공용 AI** | `MoveIntent`(방향 사다리 — 다가가기·도망·거리 벌리기) `PatrolPlan`(순찰 목표) `NoiseBoard`(소리) — **모드를 늘릴 때는 여기 하나만** |
 | MonoBehaviour | `GameManager` `Player` `Enemy` `MovingObject` `RandomDung` `CameraPlayer` `Trap` `ItemDescription` `ItemInstance` |
 
 ### 기억해야 할 축
@@ -191,6 +198,70 @@ for f in glob.glob('Assets/Code/**/*.cs',recursive=True):
 
 **타일 지형을 애셋으로**(1절), **맵 끝자락(베드락)**, **`SiblingRuleTile`**.
 
+### 셋째 세션
+
+**커밋 다섯**(7절).
+
+**강화 수치**(`ItemEnhancement`) — 바닥에 놓이는 장비에 +0 ~ +2 가 붙는다.
+**한 단계 올라갈 때마다 절반**이라 +0 이 약 57%, +2 는 약 14%다. 셋을 같은
+확률로 두면 장비의 3분의 2가 강화품이 되어 +2 를 주워도 특별할 것이 없다.
+
+**이름을 보여 주는 곳은 전부 `ItemInstance.FullNameOf` 를 쓴다** — 가방 목록 ·
+발밑 화면 · 모든 메시지. 어느 한 곳만 `DisplayNameOf` 로 두면 거기서는
++2 와 +0 이 구별되지 않는다. **정리(`SortByName`)만 예외**로 강화를 빼고 센다.
+넣어 두면 나무몽둥이+2 와 나무몽둥이가 서로 떨어져 놓인다.
+
+**장비 자리별 글자 색** — 무기 노랑 · 방어구 주황 · 장신구 진한 분홍
+(`ItemMark.SlotColored`). **사람이 고르는 표식과 달리 시트의 `equipslot` 이 곧
+색이라**, 새 장비를 표에 더하면 색은 저절로 따라온다. 목록에 그리는 이름은
+전부 `ItemInstance.ListNameOf`(표식 + 색 입힌 이름)를 쓰고, **메시지는
+`FullNameOf`(색 없음)를 쓴다** — 알림 창까지 물들이면 문구 안에서 이름만 튄다.
+
+**정리(A+B) 차례** — 차고 있는 것이 맨 앞에 무기 → 방어구 → 장신구,
+그 뒤는 전부 이름순이다(`ItemOrder.RankOf`). **차고 있지 않은 여벌 장비는
+이름순 무리에 섞인다.** 차례를 `EquipmentSlot` 의 값(1·2·3)에 기대지 않고
+`RankOf` 에 다시 적었다 — 열거형을 건드리면 정리 차례가 조용히 따라 바뀐다.
+
+**매 프레임 낭비 걷어내기.** 메뉴 화면은 입력을 기다리느라 코루틴이 매 프레임
+도는데, 그 안에서 화면을 통째로 다시 그리고 있었다. **턴이 흐르지 않는 화면이라
+다시 그릴 이유가 없다** — 상태창은 이미 그렇게 하고 있었다(주석까지 달려 있다).
+
+- `PanelView.ShowList` — 같은 글자를 같은 자리에 다시 그리라면 아무 일도 안 한다.
+  TMP 의 `GetPreferredValues`(글자 크기 계산)는 **캐시가 없어** 매번 처음부터
+  다시 잰다. 값을 견주는 방식이라 "다시 그려 달라" 를 빠뜨려 낡은 채 남는 일이 없다.
+- `BagMenuController.Browse` — 목록 글자를 커서가 움직였을 때와 정리했을 때만 만든다.
+- `HudView.Refresh` — 값이 바뀌었을 때만 그린다. TMP 는 같은 문자열이면 일찍
+  빠져나가 주지만 **보간 문자열은 그 비교에 닿기 전에 이미 만들어진다.**
+
+**시트 조회를 O(1) 로.** 카탈로그 넷이 `foreach` 로 훑고 있었다. `ItemDescription`
+의 이름·자리·성능이 전부 프로퍼티라 한 줄을 그리는 데만도 여러 번 훑고, 가방
+목록이 그것을 아이템 수만큼 되풀이했다. `SheetIndex` 가 색인을 만든다 —
+**값을 복사하는 게 아니라 줄을 가리키는 색인**이라 10절과 어긋나지 않고,
+`Reload()` 가 목록과 색인을 함께 버린다. **번호가 겹치면 앞의 것을 남긴다**
+(훑던 때와 답이 같아야 한다).
+
+**골드가 한 층에도 안 나오던 것을 고침.** 드랍율을 인스펙터 배열에서 시트로
+옮길 때(`52cfdbc`), `item` 시트에 줄이 없는 동전의 가중치가 0 이 되어 있었다.
+다른 아이템은 멀쩡히 나오므로 "가중치가 모두 0" 경고에도 걸리지 않았다.
+
+**동전은 시트의 한 줄이 아니다** — 가방에 들어가지 않고 소지금이 된다.
+시트에 넣으면 갈래·장비 자리처럼 뜻 없는 칸이 따라붙고, 정의 애셋을 달면
+가방과 마킹이 동전을 아이템으로 본다. 그래서 등급만 `GoldPile.DropGrade`
+가 들고 있고, 눈금은 시트와 같은 사다리다(지금 `A`).
+
+같은 일이 다시 조용히 나지 않도록 **가중치가 0 인 프리팹마다 층을 만들 때
+경고를 띄운다**(`DungeonPopulator.WarnAboutUnspawnableItems`).
+
+**장착 중 표시 `E`** — 가방 목록에서 차고 있는 것 앞에 붙는다(`ItemMark`).
+끈적끈적 `※` 과 같은 갈래다. 사람이 고르는 표식이 아니라 게임이 붙이는
+사실이라 색을 고를 수 없고, 마킹의 여덟 색과 겹치지 않는 흰색을 쓴다.
+차례는 **`E` → `※` → 내가 적은 표식** 이다("E※●나무몽둥이+2").
+장비는 가방에서 빠지지 않으므로(`Equipment` 주석) 이 표시가 없으면 같은
+이름의 장비가 둘일 때 어느 쪽을 차고 있는지 알 길이 없다.
+
+굴리는 것은 `DungeonPopulator` 가 하고 규칙은 `ItemEnhancement` 가 안다.
+안에서 무작위를 굴리면 Unity 없이 확인할 수 없다.
+
 **가방** — 아이템 마킹(종류 단위), 이름순 정리(A+B), 끈적끈적(개체 단위).
 
 **장비** — 특수 능력 세 가지(`경험치증가` `치명타무효` `만복도절약`),
@@ -214,6 +285,11 @@ Assets/Resources/ExcelData.xlsx  ──저장──▶  ExcelData.asset  ──�
 | 필드 이름 | **시트** 이름 (`Conditions`) |
 | 엔티티 필드 이름 | **열** 이름 (`id` `name` `explanation` …) |
 
+**시트 이름은 대소문자를 가리지 않지만(`GetSheet`), 열 이름은 가린다(`GetField`).**
+시트를 `Trait` 에서 `trait` 으로 바꿔도 필드가 `Trait` 이면 그대로 들어오지만,
+열 이름은 한 글자만 달라도 그 칸이 통째로 버려진다. 헷갈리지 않도록 시트 이름과
+필드 이름은 글자까지 똑같이 맞춰 둔다.
+
 **어긋나면 경고 없이 조용히 비어 버린다.** 임포터가 시트가 아니라 *필드* 를 훑기 때문에,
 시트만 추가하면 무시된다. 시트를 늘릴 때는 `ExcelData` 에 필드도 함께 추가할 것.
 실제로 `Trap` · `Monster` · `item` 세 시트가 필드가 없다는 이유만으로 한동안
@@ -221,7 +297,7 @@ Assets/Resources/ExcelData.xlsx  ──저장──▶  ExcelData.asset  ──�
 (`sell price` 는 C# 필드 이름이 될 수 없다).
 
 `[ExcelAsset(LogOnImport = true)]` **를 켜 두었다.** 저장할 때마다
-`Imported 4 sheets` 로그가 뜬다. **4보다 작으면 이름이 어긋난 것이다.**
+`Imported 7 sheets` 로그가 뜬다. **7보다 작으면 이름이 어긋난 것이다.**
 이 로그가 조용한 실패를 알아채는 유일한 방법이라 끄지 말 것.
 
 ### 애셋이 코드보다 낡을 수 있다
@@ -237,10 +313,28 @@ Assets/Resources/ExcelData.xlsx  ──저장──▶  ExcelData.asset  ──�
 
 | 시트 | 읽는 코드 | 상태 |
 |---|---|---|
-| `Conditions` | `ConditionSheet` → `ConditionCatalog` | 15종. 잠·혼란·봉인이 실제로 걸린다 |
+| `Conditions` | `ConditionSheet` → `ConditionCatalog` | 20종. 잠·혼란·봉인이 실제로 걸린다 |
 | `Trap` | `TrapSheet` → `TrapCatalog` | 9종. **`soil` · `sticky` 만 효과가 없다** |
-| `Monster` | `MonsterSheet` → `MonsterCatalog` | 1종. 수치·경험치가 실제로 쓰인다 |
+| `Monster` | `MonsterSheet` → `MonsterCatalog` | 1종. `critical` 은 **확률이 아니라 1/0** 이다 |
 | `item` | `ItemSheet` → `ItemCatalog` | 7종. **번호가 신원이다.** 장비 3종에 특수 능력 |
+| `partner` | `PartnerSheet` → `PartnerCatalog` | 12명. 수치·특성만. **오브젝트는 아직 없다** |
+| `trait` | `TraitSheet` → `TraitCatalog` | 19종. **번호가 신원이고, 동작은 아직 하나도 없다** |
+| `partnerline` | `PartnerLineSheet` → `PartnerLineCatalog` | 12명. 대사는 셋만 끝까지 차 있다 |
+
+### 동료 표의 규칙 셋
+
+- **`critical` 은 확률이 아니라 1/0 이다.** 얼마나 자주 나는지는 코드 한 곳이
+  정한다(`Player.IncomingCriticalPercent`). 옛 표기(`20` 같은 값)를 적으면
+  `MonsterSheet.ParseCritical` 이 알려 준다 — 안 알리면 조용히 '낸다' 가 된다.
+- **`partner.skill1~6` 은 `trait.id` 를 가리킨다.** 번호를 잘못 적으면 그 특성만
+  조용히 없는 것이 되므로 `PartnerCatalog` 가 두 표를 맞춰 보고 알린다.
+  빈 칸(0)은 담기지 않는다 — 지금 넷째부터가 모두 비어 있다.
+  **skill 열을 늘리면 `PartnerEntity` 와 `CollectTraits` 를 함께 늘릴 것** —
+  실제로 `skill6` 을 더했을 때 그 칸이 통째로 버려지고 있었다.
+- **`partnerline` 의 열 이름 숫자는 '이상' 이다.** `hp80` 은 80% <b>이상</b>이고,
+  그렇게 읽지 않으면 79% 처럼 어느 칸에도 안 걸리는 구간이 생긴다.
+  빈 칸이면 위 칸을 대신 읽지 않고 **말하지 않는다**(빈사인데 "여유롭습니다" 를
+  말하게 된다). 대사가 비는 것은 잘못이 아니라서 알리지 않는다.
 
 세 카탈로그는 `ExcelSheets` 하나를 거쳐 애셋을 읽는다. 표를 다시 읽히려면
 `ExcelSheets.Reload()` 를 부른다(카탈로그 셋을 함께 비운다).
@@ -322,14 +416,24 @@ Assets/Resources/ExcelData.xlsx  ──저장──▶  ExcelData.asset  ──�
 
 ---
 
-## 7. 커밋 — 지금 120건이 미커밋이다
+## 7. 커밋
 
-리팩터링 · 검증 환경 · 이 문서까지가 세 커밋으로 들어가 있고
-(`9b1a8b7` `a62b60c` `3c2f5e8`), **그 뒤의 작업이 전부 미커밋이다.**
+둘째 세션의 작업 120 건을 다섯으로 나눠 넣었다.
 
-씬 파일이 추적되므로 커밋할 때는 **Unity 에서 저장한 뒤**에 한다.
-나눈다면 이런 덩어리다 — 함정 효과 / 엑셀 데이터 확장 / 적 AI / 가방 기능
-(마킹·정리·끈적끈적) / 타일 지형 애셋화.
+| | |
+|---|---|
+| `52cfdbc` | 엑셀 시트 넷을 전부 잇기 |
+| `01e9902` | 이름 대신 번호를 신원으로 — 정의 애셋 3종 |
+| `c52b585` | 타일의 지형은 이름이 아니라 애셋이 정한다 |
+| `e8064e0` | 함정 효과 · 상태이상 · 적 AI · 가방 · 메시지 이력 |
+| `9d5dd4b` | 검증 항목 확장과 인수인계 문서 갱신 |
+
+**함정 효과 · 적 AI · 가방을 따로 가르지 못했다.** `GameManager.cs`(+651줄)와
+`Player.cs`(+332줄)가 셋에 모두 걸쳐 있어 파일 단위로는 나뉘지 않는다.
+훅 단위로 쪼갤 수는 있지만 그래도 중간 커밋이 컴파일되지 않아 실익이 없다.
+
+**커밋할 때는 Unity 를 끄거나 저장한 뒤에 한다.** 씬 파일이 추적되므로
+열어 둔 채로 커밋하면 메모리의 옛 버전이 나중에 덮어쓴다(1절).
 
 ---
 

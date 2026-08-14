@@ -2918,12 +2918,7 @@ MonoBehaviour:
   - {fileID: 2127632079877684650, guid: 39dc0a9cac9e60c49b1295450ad1ee35, type: 3}
   - {fileID: 5085370050522074086, guid: 90f0010bb231f7745af332c7d1b9c6ac, type: 3}
   stairsPrefab: {fileID: 2869776855745267099, guid: 53322a7121b9c6b4284ed2c8340e2509, type: 3}
-  itemWeights:
-  - 3
-  - 3
-  - 3
-  - 2
-  - 1
+  partnerPrefab: {fileID: 8193023548343873250, guid: 71834ad216062714c8f26c24129f66ab, type: 3}
   floorTilemap: {fileID: 0}
   Minimap: {fileID: 0}
   floorTile: {fileID: 11400000, guid: c56ae3bd997307b409301fb9cf870e4c, type: 2}
@@ -2984,6 +2979,7 @@ MonoBehaviour:
   StatusRightColumn: {fileID: 900000031}
   playersTurn: 1
   enemies: []
+  partners: []
   enemyPositions: []
   PlayerPosition: {x: 0, y: 0}
 --- !u!1 &1205580082

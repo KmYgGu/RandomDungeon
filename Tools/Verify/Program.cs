@@ -47,6 +47,14 @@ static class Program
         TestItemMark();
         TestItemOrder();
         TestWeightedPick();
+        TestItemEnhancement();
+        TestSheetIndex();
+        TestExtensionPoints();
+        TestPartnerSheet();
+        TestPartnerLines();
+        TestSpentPress();
+        TestPartnerRoster();
+        TestPartnerPlan();
 
         Console.WriteLine(failures == 0
             ? "\nALL PASS"
@@ -1169,29 +1177,42 @@ static class Program
         Check(toldRate, "빈도가 이상한 줄의 번호를 안 알려 줌");
         Check(toldName, "이름이 빈 줄의 번호를 안 알려 줌");
 
-        // 6) 치명타는 적마다 다르고, 안 적으면 0(치명타 없음)이다.
-        //    기본이 0 이어야 "저 녀석은 조심해야 한다" 가 성립한다.
-        Check(defs[0].CriticalPercent == 0, $"안 적었는데 치명타가 붙음 {defs[0].CriticalPercent}");
+        // 6) 치명타는 켜고 끄는 값이다. 안 적으면 꺼진 것이고,
+        //    기본이 꺼짐이어야 "저 녀석은 조심해야 한다" 가 성립한다.
+        Check(!defs[0].DealsCritical, "안 적었는데 치명타가 붙음");
 
         var crits = new List<MonsterEntity>
         {
-            new MonsterEntity { id = 20001, name = "회심의 적", critical = 30, rate = "중" },
-            new MonsterEntity { id = 20002, name = "음수", critical = -5, rate = "중" },
-            new MonsterEntity { id = 20003, name = "초과", critical = 150, rate = "중" },
+            new MonsterEntity { id = 20001, name = "회심의 적", critical = 1, rate = "중" },
+            new MonsterEntity { id = 20002, name = "평범한 적", critical = 0, rate = "중" },
         };
         var critProblems = new List<string>();
         var critDefs = MonsterSheet.FromEntities(crits, critProblems);
 
-        Check(critDefs[0].CriticalPercent == 30, $"적은 값이 안 들어감 {critDefs[0].CriticalPercent}");
-        Check(critDefs[1].CriticalPercent == 0, $"음수가 0 으로 안 잘림 {critDefs[1].CriticalPercent}");
-        Check(critDefs[2].CriticalPercent == 100, $"100 초과가 안 잘림 {critDefs[2].CriticalPercent}");
-        Check(critProblems.Count == 2, $"범위 밖을 {critProblems.Count}건 알림 (기대 2)");
+        Check(critDefs[0].DealsCritical, "1 인데 치명타가 안 켜짐");
+        Check(!critDefs[1].DealsCritical, "0 인데 치명타가 켜짐");
+        Check(critProblems.Count == 0, $"멀쩡한 1/0 에 알림이 뜸 ({critProblems.Count}건)");
+
+        // 이 열은 한때 확률(%)이었다. 예전 감각으로 20 이라고 적으면 20% 가 아니라
+        // 모르는 값인데, 그대로 두면 조용히 '낸다' 로만 굴러간다. 반드시 알려야 한다.
+        var oddProblems = new List<string>();
+        var oddDefs = MonsterSheet.FromEntities(
+            new List<MonsterEntity>
+            {
+                new MonsterEntity { id = 20004, name = "옛 표기", critical = 20, rate = "중" },
+            },
+            oddProblems);
+
+        Check(oddDefs[0].DealsCritical, "1·0 이 아닌 값을 '안 낸다' 로 봄");
+        Check(oddProblems.Count == 1, $"1·0 이 아닌 값을 안 알림 ({oddProblems.Count}건)");
+        Check(MonsterSheet.ParseCritical(0, 0) == false && MonsterSheet.ParseCritical(1, 0),
+              "1/0 판정이 뒤집힘");
 
         // 7) 빈 표에도 넘어지지 않는다.
         Check(MonsterSheet.FromEntities(null).Count == 0, "null 에서 줄이 나옴");
         Check(MonsterSheet.FromEntities(new List<MonsterEntity>()).Count == 0, "빈 표에서 줄이 나옴");
 
-        Console.WriteLine("  옮겨 담기 · 수치 자리 · 빈도 세 가지 · 치명타 확률 · 이상한 줄 알림 검사 완료");
+        Console.WriteLine("  옮겨 담기 · 수치 자리 · 빈도 세 가지 · 치명타 1/0 · 이상한 줄 알림 검사 완료");
     }
 
     // ── 아이템 표 옮겨 담기 ─────────────────────────────────────────────────
@@ -1358,6 +1379,12 @@ static class Program
 
         // 비었거나 이상한 값은 0(안 나옴)이고 알려 준다.
         var gradeProblems = new List<string>();
+        // 동전은 시트의 한 줄이 아니라 코드가 등급을 들고 있다(GoldPile.DropGrade).
+        // 비었거나 오타면 가중치가 0 이 되어 골드가 한 층에도 나오지 않는데,
+        // 다른 아이템이 멀쩡히 나오므로 에러도 경고도 나지 않는다. 실제로 그랬다.
+        Check(ItemSheet.ParseDropRate(GoldPile.DropGrade, 0) > 0f,
+              $"동전이 바닥에 나오지 않는 등급임: '{GoldPile.DropGrade}'");
+
         Check(ItemSheet.ParseDropRate("", 11, gradeProblems) == 0f, "빈 등급이 0 이 아님");
         Check(ItemSheet.ParseDropRate("특급", 22, gradeProblems) == 0f, "모르는 등급이 0 이 아님");
         Check(ItemSheet.ParseDropRate("A*", 33, gradeProblems) == 0f, "이상한 부호가 0 이 아님");
@@ -1728,6 +1755,79 @@ static class Program
             if (shape == MarkShape.None) canErase = true;
         Check(canErase, "표식을 지울 방법이 없음");
 
+        // ── 게임이 붙이는 표시(끈적끈적 · 장착 중) ────────────────────────
+        //
+        // 사람이 고르는 표식과 달리 색을 고를 수 없다. 여덟 색 어디와도 겹치지
+        // 않아야 "내가 적어 둔 것" 과 "물건에 실제로 일어난 일" 이 갈린다.
+
+        string equipped = ItemMark.EquippedPrefix();
+        string sticky = ItemMark.StickyPrefix();
+
+        foreach (string fact in new[] { equipped, sticky })
+        {
+            Check(fact.StartsWith("<color=") && fact.EndsWith("</color>"),
+                  $"색 태그 모양이 다름: {fact}");
+
+            int factOpen = fact.IndexOf('>');
+            int factClose = fact.IndexOf("</color>");
+            bool wellFormed = factOpen > 0 && factClose > factOpen;
+            Check(wellFormed, $"태그가 안 닫힘: {fact}");
+
+            // 모양이 이미 어긋났으면 잘라 보지 않는다. 여기서 예외가 나면 검사가
+            // 통째로 죽어 뒤에 오는 항목들이 아예 돌지 않는다.
+            if (!wellFormed) continue;
+
+            // 태그가 표시 글자에서 닫혀야 뒤따르는 아이템 이름이 물들지 않는다.
+            string inside = fact.Substring(factOpen + 1, factClose - factOpen - 1);
+            Check(inside.Length == 1, $"태그가 표시 글자 말고 다른 것까지 감쌈: {inside}");
+        }
+
+        Check(!hexes.Contains(ItemMark.EquippedHex), $"장착 표시 색이 마킹 색과 겹침: {ItemMark.EquippedHex}");
+        Check(!hexes.Contains(ItemMark.StickyHex), $"끈적끈적 색이 마킹 색과 겹침: {ItemMark.StickyHex}");
+
+        Check(ItemMark.EquippedGlyph == "E", $"장착 표시가 E 가 아님: {ItemMark.EquippedGlyph}");
+        Check(ItemMark.EquippedGlyph != ItemMark.StickyGlyph, "장착 표시와 끈적끈적이 같은 글자");
+
+        // ── 장비 자리별 글자 색 ───────────────────────────────────────────
+        //
+        // 무기 노랑 · 방어구 주황 · 장신구 진한 분홍. 셋이 겹치면 색으로
+        // 가려낸다는 목적 자체가 없어진다.
+
+        var slotHexes = new HashSet<string>();
+        foreach (EquipmentSlot slot in
+                 new[] { EquipmentSlot.Weapon, EquipmentSlot.Armor, EquipmentSlot.Accessory })
+        {
+            string hex = ItemMark.SlotHexOf(slot);
+            Check(hex.StartsWith("#") && hex.Length == 7, $"{slot} 의 색 값이 이상함: {hex}");
+            Check(slotHexes.Add(hex), $"{slot} 의 색이 다른 자리와 겹침: {hex}");
+        }
+
+        // 장비가 아니면 색을 입히지 않는다. 소모품까지 물들면 가려낼 수가 없다.
+        Check(ItemMark.SlotHexOf(EquipmentSlot.None) == "", "장비가 아닌데 색이 있음");
+        Check(ItemMark.SlotColored("사과", EquipmentSlot.None) == "사과", "소모품에 색이 붙음");
+
+        // 태그가 이름 전체를 감싸고 거기서 닫힌다.
+        string colored = ItemMark.SlotColored("나무몽둥이+2", EquipmentSlot.Weapon);
+        Check(colored.StartsWith($"<color={ItemMark.WeaponHex}>") && colored.EndsWith("</color>"),
+              $"무기 색 태그 모양이 다름: {colored}");
+
+        int nameOpen = colored.IndexOf('>');
+        int nameClose = colored.IndexOf("</color>");
+        Check(nameOpen > 0 && nameClose > nameOpen, $"이름 색 태그가 안 닫힘: {colored}");
+        if (nameOpen > 0 && nameClose > nameOpen)
+            Check(colored.Substring(nameOpen + 1, nameClose - nameOpen - 1) == "나무몽둥이+2",
+                  $"태그가 이름 전체를 감싸지 않음: {colored}");
+
+        // 빈 이름에 태그만 남기지 않는다.
+        Check(ItemMark.SlotColored("", EquipmentSlot.Armor) == "", "빈 이름에 태그가 붙음");
+
+        // 셋이 함께 붙는 모습. 장착 표시가 맨 앞에 온다.
+        string together = equipped + sticky + ItemMark.Prefix(MarkShape.Circle, MarkColor.Red);
+        Check(together.IndexOf(ItemMark.EquippedGlyph) < together.IndexOf(ItemMark.StickyGlyph),
+              "장착 표시가 끈적끈적보다 뒤에 옴");
+        Check(together.IndexOf(ItemMark.StickyGlyph) < together.IndexOf("●"),
+              "게임이 붙인 표시가 내가 적은 표식보다 뒤에 옴");
+
         // ── 표식 수첩(종류 단위) ──────────────────────────────────────────
         var book = new MarkBook();
         const int apple = 20001;
@@ -1811,7 +1911,53 @@ static class Program
         ItemOrder.SortNames(null);
         ItemOrder.SortNames(new List<string>());
 
-        Console.WriteLine("  가나다 순 · 같은 앞글자 · 이름 없는 것 뒤로 검사 완료");
+        // ── 차고 있는 것이 맨 앞 ──────────────────────────────────────────
+        //
+        // 무기 → 방어구 → 장신구 차례로 서고, 나머지는 그 뒤에서 이름순이다.
+        // 차고 있지 않은 장비는 나머지에 섞인다.
+
+        // 6) 자리마다 차례가 다르고, 차고 있지 않은 것은 전부 맨 뒤 무리다.
+        Check(ItemOrder.RankOf(EquipmentSlot.Weapon) < ItemOrder.RankOf(EquipmentSlot.Armor),
+              "무기가 방어구보다 앞이 아님");
+        Check(ItemOrder.RankOf(EquipmentSlot.Armor) < ItemOrder.RankOf(EquipmentSlot.Accessory),
+              "방어구가 장신구보다 앞이 아님");
+        Check(ItemOrder.RankOf(EquipmentSlot.Accessory) < ItemOrder.RankOf(EquipmentSlot.None),
+              "차고 있는 것이 안 차고 있는 것보다 뒤에 옴");
+
+        // 7) 실제로 정리해 본다. 가방에 차고 있는 셋과 아닌 넷이 섞여 있다.
+        //    "나무몽둥이" 는 하나는 차고 있고 하나는 여벌이다 — 여벌은 이름순 무리로 간다.
+        var bag = new List<(EquipmentSlot equipped, string name)>
+        {
+            (EquipmentSlot.None, "사과"),
+            (EquipmentSlot.None, "나무몽둥이"),      // 여벌 무기
+            (EquipmentSlot.Accessory, "구리반지"),
+            (EquipmentSlot.None, "기력회복약"),
+            (EquipmentSlot.Weapon, "나무몽둥이"),
+            (EquipmentSlot.None, "회복씨앗"),
+            (EquipmentSlot.Armor, "헌옷"),
+        };
+        bag.Sort((a, b) => ItemOrder.Compare(a.equipped, a.name, b.equipped, b.name));
+
+        Check(bag[0].equipped == EquipmentSlot.Weapon, $"첫째가 차고 있는 무기가 아님: {bag[0].name}");
+        Check(bag[1].equipped == EquipmentSlot.Armor, $"둘째가 차고 있는 방어구가 아님: {bag[1].name}");
+        Check(bag[2].equipped == EquipmentSlot.Accessory, $"셋째가 차고 있는 장신구가 아님: {bag[2].name}");
+
+        // 나머지 넷은 이름순이다. 여벌 나무몽둥이가 여기 섞여 있어야 한다.
+        Check(bag[3].name == "기력회복약", $"넷째가 다름: {bag[3].name}");
+        Check(bag[4].name == "나무몽둥이" && bag[4].equipped == EquipmentSlot.None,
+              $"여벌 장비가 이름순 무리에 없음: {bag[4].name}");
+        Check(bag[5].name == "사과", $"여섯째가 다름: {bag[5].name}");
+        Check(bag[6].name == "회복씨앗", $"일곱째가 다름: {bag[6].name}");
+
+        // 8) 견주기 자체의 성질. 뒤집으면 부호도 뒤집혀야 한다.
+        Check(ItemOrder.Compare(EquipmentSlot.Weapon, "힣", EquipmentSlot.None, "가") < 0,
+              "차고 있는 것이 이름에 밀림");
+        Check(ItemOrder.Compare(EquipmentSlot.None, "가", EquipmentSlot.Weapon, "힣") > 0,
+              "뒤집었는데 부호가 안 뒤집힘");
+        Check(ItemOrder.Compare(EquipmentSlot.Weapon, "사과", EquipmentSlot.Weapon, "사과") == 0,
+              "같은 것인데 다르다고 함");
+
+        Console.WriteLine("  가나다 순 · 같은 앞글자 · 이름 없는 것 뒤로 · 차고 있는 것 먼저 검사 완료");
     }
 
     // ── 가중치로 고르기 ─────────────────────────────────────────────────────
@@ -1863,6 +2009,939 @@ static class Program
         Check(WeightedPick.Choose(weights, 27f) == 7, "끝을 넘겼을 때 아무것도 안 나옴");
 
         Console.WriteLine("  모든 자리가 뽑히는가 · 경계값 · 가중치 0 · 빈 목록 검사 완료");
+    }
+
+    // ── 강화 수치 — 무엇에 붙고, 얼마나 붙고, 어떻게 보이는가 ────────────────
+    static void TestItemEnhancement()
+    {
+        Console.WriteLine("[강화 수치]");
+
+        var club = new ItemDefinition   // 나무몽둥이
+        {
+            Id = 50001, Name = "나무몽둥이", Kind = ItemKind.Equipment,
+            Slot = EquipmentSlot.Weapon, BasePower = 2,
+        };
+        var rags = new ItemDefinition   // 헌옷
+        {
+            Id = 60001, Name = "헌옷", Kind = ItemKind.Equipment,
+            Slot = EquipmentSlot.Armor, BasePower = 1,
+        };
+        var apple = new ItemDefinition  // 사과
+        {
+            Id = 20001, Name = "사과", Kind = ItemKind.Food, Slot = EquipmentSlot.None,
+        };
+
+        // 1) 장비만 강화된다. 사과에 +2 가 붙으면 더해질 성능이 없는데 이름에만 뜬다.
+        for (float roll = 0f; roll <= 1f; roll += 0.01f)
+        {
+            int level = ItemEnhancement.OnSpawn(club, roll);
+            Check(level >= 0 && level <= ItemEnhancement.MaxOnSpawn,
+                  $"강화가 0~{ItemEnhancement.MaxOnSpawn} 밖 — {level} (roll {roll})");
+
+            Check(ItemEnhancement.OnSpawn(apple, roll) == 0, $"장비가 아닌데 강화됨 (roll {roll})");
+        }
+
+        // 표에 없는 번호. 정의를 못 찾았는데 강화가 붙으면 어긋난 채로 굴러간다.
+        Check(ItemEnhancement.OnSpawn(null, 0.99f) == 0, "정의가 없는데 강화됨");
+
+        // 2) 양 끝. Random.value 는 1 을 낼 수 있어 위끝이 넘어가면 안 된다.
+        Check(ItemEnhancement.OnSpawn(club, 0f) == 0, "맨 앞이 +0 이 아님");
+        Check(ItemEnhancement.OnSpawn(club, 1f) == ItemEnhancement.MaxOnSpawn, "위끝이 최대가 아님");
+
+        // 3) 낮은 수치가 더 흔하다. 이것이 뒤집히면 +2 가 흔해져 강화의 뜻이 없어진다.
+        var counts = new int[ItemEnhancement.MaxOnSpawn + 1];
+        const int Rolls = 10000;
+        for (int i = 0; i < Rolls; i++)
+            counts[ItemEnhancement.OnSpawn(club, (i + 0.5f) / Rolls)]++;
+
+        for (int level = 1; level <= ItemEnhancement.MaxOnSpawn; level++)
+            Check(counts[level] < counts[level - 1],
+                  $"+{level} 가 +{level - 1} 보다 드물지 않음 — {counts[level]} vs {counts[level - 1]}");
+
+        // 그러면서도 모든 수치가 실제로 나와야 한다. 하나라도 0 이면 영영 안 나오는 것이다.
+        for (int level = 0; level <= ItemEnhancement.MaxOnSpawn; level++)
+            Check(counts[level] > 0, $"+{level} 가 한 번도 안 나옴");
+
+        // 절반씩 줄어드는 규칙이 실제로 그 비율로 나오는가(오차 1%p 안).
+        Check(Math.Abs(counts[0] / (float)Rolls - 4f / 7f) < 0.01f, $"+0 의 비율이 다름 — {counts[0]}/{Rolls}");
+        Check(Math.Abs(counts[2] / (float)Rolls - 1f / 7f) < 0.01f, $"+2 의 비율이 다름 — {counts[2]}/{Rolls}");
+
+        // 4) +0 은 이름에 붙이지 않는다. 초반에는 대부분이 +0 이라 전부 지저분해진다.
+        Check(ItemEnhancement.Suffix(0) == "", "+0 이 이름에 붙음");
+        Check(ItemEnhancement.Suffix(1) == "+1", "+1 이 안 붙음");
+        Check(ItemEnhancement.Suffix(2) == "+2", "+2 가 안 붙음");
+
+        // 5) 이름에 붙는 모습. 가방·발밑·알림이 전부 이 꼴을 쓴다.
+        Check(club.Name + ItemEnhancement.Suffix(2) == "나무몽둥이+2", "이름에 강화가 안 붙음");
+        Check(rags.Name + ItemEnhancement.Suffix(0) == "헌옷", "강화 0 인데 이름이 달라짐");
+
+        // 6) 주웠을 때의 문구. 이름과 강화만 있고 성능 숫자는 붙지 않는다.
+        string picked = MessageCatalog.Format(
+            GameMessage.ItemPickedUpFromGround, club.Name + ItemEnhancement.Suffix(2));
+
+        Check(picked.Contains("나무몽둥이+2"), $"알림에 강화가 없음 — {picked}");
+        Check(picked.Contains("주웠다"), $"주웠다는 말이 없음 — {picked}");
+        Check(!picked.Contains("공격력") && !picked.Contains("\n"),
+              $"알림에 성능 줄이 붙음 — {picked}");
+
+        // 7) 가방이 가득 찼을 때. 무엇을 못 주웠는지 말해 주지 않으면, 여러 개가
+        //    겹쳐 놓인 칸에서 어느 것이 남았는지 알 수 없다.
+        string full = MessageCatalog.Format(
+            GameMessage.BagFull, club.Name + ItemEnhancement.Suffix(1));
+
+        Check(full.Contains("나무몽둥이+1"), $"못 주운 것의 이름이 없음 — {full}");
+        Check(full.Contains("가득") && full.Contains("줍지 못했다"), $"가방이 찼다는 말이 없음 — {full}");
+
+        Console.WriteLine(
+            "  장비만 강화 · 양 끝 · 낮은 쪽이 흔한가 · 절반 비율 · +0 감추기 · 이름 · 문구 검사 완료");
+    }
+
+    // ── 시트 색인 ───────────────────────────────────────────────────────────
+    //
+    // 카탈로그가 목록을 훑던 것을 색인으로 바꿨다. <b>답이 달라지면 안 된다</b> —
+    // 표는 그대로인데 게임이 달라지면, 표를 고친 사람은 무엇이 바뀐 건지 알 수 없다.
+    static void TestSheetIndex()
+    {
+        Console.WriteLine("[시트 색인]");
+
+        var rows = new List<ItemDefinition>
+        {
+            new ItemDefinition { Id = 20001, Name = "사과" },
+            new ItemDefinition { Id = 50001, Name = "나무몽둥이" },
+            new ItemDefinition { Id = 20001, Name = "나중에 적은 사과" },   // 번호가 겹친 줄
+        };
+
+        var byId = SheetIndex.Build(rows, d => d.Id);
+
+        // 1) 있는 번호를 찾고, 없는 번호는 못 찾는다.
+        Check(byId.TryGetValue(50001, out ItemDefinition club) && club.Name == "나무몽둥이",
+              "있는 번호를 못 찾음");
+        Check(!byId.ContainsKey(99999), "없는 번호가 찾아짐");
+
+        // 2) 번호가 겹치면 앞의 것을 남긴다. 훑어서 처음 만난 것을 돌려주던
+        //    예전과 같은 답이어야 한다.
+        Check(byId[20001].Name == "사과", $"겹친 번호에서 뒤의 것이 이김: {byId[20001].Name}");
+        Check(byId.Count == 2, $"줄 수가 다름: {byId.Count}");
+
+        // 3) 이름(문자열)으로도 색인한다. 함정이 이 길을 쓴다.
+        var traps = new List<ItemDefinition>
+        {
+            new ItemDefinition { Id = 1, Name = "gas" },
+            new ItemDefinition { Id = 2, Name = "dart" },
+        };
+        var byName = SheetIndex.Build(traps, d => d.Name);
+        Check(byName.TryGetValue("dart", out ItemDefinition dart) && dart.Id == 2,
+              "이름으로 못 찾음");
+
+        // 4) 열쇠가 없는 줄은 건너뛴다. Dictionary 는 null 열쇠를 받지 않으므로
+        //    걸러 내지 않으면 색인을 만드는 그 자리에서 터진다.
+        var withNulls = new List<ItemDefinition>
+        {
+            new ItemDefinition { Id = 1, Name = null },
+            null,
+            new ItemDefinition { Id = 2, Name = "사과" },
+        };
+        //    걸러 내지 못하면 여기서 예외가 난다. 잡아서 실패로 알린다 —
+        //    그냥 두면 검사가 통째로 죽어 아래 것들이 아예 돌지 않는다.
+        Dictionary<string, ItemDefinition> safe;
+        try
+        {
+            safe = SheetIndex.Build(withNulls, d => d.Name);
+        }
+        catch (Exception e)
+        {
+            Check(false, $"이름 없는 줄에서 터짐: {e.GetType().Name}");
+            safe = new Dictionary<string, ItemDefinition>();
+        }
+
+        Check(safe.Count == 1 && safe.ContainsKey("사과"), $"이름 없는 줄이 섞임: {safe.Count}");
+
+        // 5) 빈 목록·null 에 넘어지지 않는다.
+        Check(SheetIndex.Build(new List<ItemDefinition>(), d => d.Id).Count == 0,
+              "빈 목록에서 뭔가 나옴");
+        Check(SheetIndex.Build<int, ItemDefinition>(null, d => d.Id).Count == 0,
+              "null 목록에서 뭔가 나옴");
+        Check(SheetIndex.Build<int, ItemDefinition>(rows, null).Count == 0,
+              "열쇠 뽑는 법이 없는데 색인이 만들어짐");
+
+        Console.WriteLine("  찾기 · 겹친 번호는 앞의 것 · 이름 색인 · 빈 열쇠 · null 검사 완료");
+    }
+
+    // ── 동료 표 · 특성 표 ───────────────────────────────────────────────────
+    //
+    // 시트 둘이 번호로 이어져 있다(partner.skill1~5 → Trait.id). 그 이음매가
+    // 어긋나면 그 특성만 조용히 없는 것이 되고, 동료는 멀쩡히 따라온다.
+    static void TestPartnerSheet()
+    {
+        Console.WriteLine("[동료 표]");
+
+        var traitRows = new List<TraitEntity>
+        {
+            new TraitEntity { id = 101, name = "혼신", explanation = "치명타시 방어력을 무시한다." },
+            new TraitEntity { id = 105, name = "건강", explanation = "상태 이상 회복이 빠르다." },
+            new TraitEntity { id = 119, name = "투지", explanation = "체력이 낮을수록 치명타율이 증가한다." },
+            new TraitEntity { id = 0, name = "번호 없음" },        // 버려질 줄
+            new TraitEntity { id = 118 },                          // 이름이 빈 줄
+        };
+        var traitProblems = new List<string>();
+        var traits = TraitSheet.FromEntities(traitRows, traitProblems);
+
+        Check(traits.Count == 4, $"특성 줄 수가 다름 {traits.Count}");
+        Check(traits[0].Id == 101 && traits[0].Name == "혼신", "특성이 제자리에 안 들어감");
+        Check(traitProblems.Count == 1, $"이름 빈 특성을 {traitProblems.Count}건 알림 (기대 1)");
+
+        var partnerRows = new List<PartnerEntity>
+        {
+            new PartnerEntity
+            {
+                id = 10002, name = "여전사", hp = 25, atk = 10, def = 2, bag = 5,
+                skill1 = 101, skill2 = 105, skill3 = 119,      // skill4~6 은 빈칸
+                gender = "여성", category = "인간",
+                explanation = "강한 육체를 만들기 위해",
+                note = "사람이 읽는 메모",
+            },
+        };
+        var partnerProblems = new List<string>();
+        var partners = PartnerSheet.FromEntities(partnerRows, partnerProblems);
+
+        // 1) 수치가 제자리로 들어간다. 열이 여섯이라 한 칸만 밀려도 알아채기 어렵다.
+        //    atk 와 def 를 다른 값으로 둔 것은 바꿔치기가 티 나게 하기 위해서다.
+        PartnerDefinition warrior = partners[0];
+        Check(warrior.Hp == 25, $"체력이 다름 {warrior.Hp}");
+        Check(warrior.Attack == 10, $"공격력이 다름 {warrior.Attack}");
+        Check(warrior.Defense == 2, $"방어력이 다름 {warrior.Defense}");
+        Check(warrior.BagSize == 5, $"가방 칸 수가 다름 {warrior.BagSize}");
+        Check(warrior.Note == "사람이 읽는 메모", "메모가 안 들어감");
+
+        // 종족과 성별은 열이 둘이다. 한때 한 칸에 "인간, 여성" 으로 붙어 있었고,
+        // 열을 가른 뒤 엔티티를 안 고쳐서 gender 가 통째로 버려진 적이 있다.
+        Check(warrior.Gender == "여성", $"성별이 다름 '{warrior.Gender}'");
+        Check(warrior.Category == "인간", $"종족이 다름 '{warrior.Category}'");
+
+        // 2) 빈 특성 칸은 담기지 않는다. 담아 두면 0 번을 찾으러 다니게 된다.
+        Check(warrior.TraitIds.Count == 3, $"특성 수가 다름 {warrior.TraitIds.Count}");
+        Check(warrior.TraitIds[0] == 101 && warrior.TraitIds[2] == 119, "특성 차례가 다름");
+        Check(!warrior.TraitIds.Contains(0), "빈 칸이 0 번 특성으로 담김");
+        Check(partnerProblems.Count == 0, $"멀쩡한 줄에 알림이 뜸 ({partnerProblems.Count}건)");
+
+        // 여섯째 칸까지 읽는다. 열을 늘렸는데 코드가 안 따라가면 그 칸만 조용히
+        // 사라진다 — skill6 이 실제로 그렇게 한 번 버려졌다.
+        var sixth = PartnerSheet.FromEntities(
+            new List<PartnerEntity>
+            {
+                new PartnerEntity { id = 10099, name = "여섯", hp = 10, skill6 = 118 },
+            });
+        Check(sixth[0].TraitIds.Count == 1 && sixth[0].TraitIds[0] == 118,
+              $"skill6 이 버려짐 ({sixth[0].TraitIds.Count}개)");
+
+        // 3) 같은 특성을 두 번 적으면 한 번만 담고 알려 준다.
+        var dupProblems = new List<string>();
+        var dup = PartnerSheet.FromEntities(
+            new List<PartnerEntity>
+            {
+                new PartnerEntity { id = 10003, name = "겹침", hp = 10, skill1 = 105, skill2 = 105 },
+            },
+            dupProblems);
+
+        Check(dup[0].TraitIds.Count == 1, $"겹친 특성이 둘로 담김 {dup[0].TraitIds.Count}");
+        Check(dupProblems.Count == 1, $"겹친 특성을 안 알림 ({dupProblems.Count}건)");
+
+        // 4) 체력이 0 이면 따라오자마자 쓰러진다. 빈칸을 눈치채기 어려운 자리다.
+        var weakProblems = new List<string>();
+        PartnerSheet.FromEntities(
+            new List<PartnerEntity> { new PartnerEntity { id = 10004, name = "체력없음", hp = 0 } },
+            weakProblems);
+        Check(weakProblems.Count == 1, $"체력 0 을 안 알림 ({weakProblems.Count}건)");
+
+        // 5) 표에 없는 특성 번호를 가리키면 알려 준다. 이것이 이 검사의 핵심이다 —
+        //    번호를 잘못 적어도 게임은 멀쩡히 돌고 에러가 나지 않는다.
+        var crossProblems = new List<string>();
+        var stranger = PartnerSheet.FromEntities(
+            new List<PartnerEntity>
+            {
+                new PartnerEntity { id = 10005, name = "없는특성", hp = 10, skill1 = 105, skill2 = 999 },
+            });
+
+        PartnerSheet.ReportUnknownTraits(stranger, traits, crossProblems);
+        Check(crossProblems.Count == 1, $"없는 특성 번호를 {crossProblems.Count}건 알림 (기대 1)");
+        Check(crossProblems.Count > 0 && crossProblems[0].Contains("999"),
+              "어느 번호가 없는지 안 알려 줌");
+
+        // 멀쩡히 이어져 있으면 아무 말도 하지 않는다.
+        var quiet = new List<string>();
+        PartnerSheet.ReportUnknownTraits(partners, traits, quiet);
+        Check(quiet.Count == 0, $"멀쩡한 이음매에 알림이 뜸 ({quiet.Count}건)");
+
+        // 6) 빈 표에도 넘어지지 않는다.
+        Check(PartnerSheet.FromEntities(null).Count == 0, "null 에서 동료가 나옴");
+        Check(TraitSheet.FromEntities(null).Count == 0, "null 에서 특성이 나옴");
+
+        Console.WriteLine("  옮겨 담기 · 수치 자리 · 빈 특성 칸 · 겹친 특성 · 없는 특성 번호 검사 완료");
+    }
+
+    // ── 동료 대사 ───────────────────────────────────────────────────────────
+    //
+    // 열 이름의 숫자(hp80)는 "80% 일 때" 가 아니라 "80% 이상일 때" 다.
+    // 그렇게 읽지 않으면 79% 처럼 어느 칸에도 안 걸리는 구간이 생긴다.
+    static void TestPartnerLines()
+    {
+        Console.WriteLine("[동료 대사]");
+
+        var rows = new List<PartnerLineEntity>
+        {
+            new PartnerLineEntity
+            {
+                id = 10001, name = "모험가", meet = "같이 동행할까?",
+                hp100 = "백", hp80 = "팔십", hp60 = "육십",
+                hp30 = "삼십", hp10 = "십", hp1 = "하나",
+                action = "출구를 추측해 볼까?", actioncase1 = "가", actioncase2 = "나", actioncase3 = "다",
+            },
+            // 만났을 때만 있고 나머지는 비어 있다. 열둘 중 일곱이 이 모양이다.
+            new PartnerLineEntity { id = 10006, name = "베테랑", meet = "나와 함께 간다면" },
+        };
+        var problems = new List<string>();
+        var sets = PartnerLineSheet.FromEntities(rows, problems);
+
+        // 1) 대사가 비는 것은 잘못이 아니다. 채워 가는 표라서 알리지 않는다.
+        Check(sets.Count == 2, $"줄 수가 다름 {sets.Count}");
+        Check(problems.Count == 0, $"빈 대사를 잘못으로 알림 ({problems.Count}건)");
+
+        PartnerLineSet full = sets[0];
+        Check(full.Meet == "같이 동행할까?", "만났을 때 대사가 안 들어감");
+        Check(full.Action == "출구를 추측해 볼까?", "고유 행동 대사가 안 들어감");
+        Check(full.ActionCases[2] == "다", "행동 결과 셋째가 안 들어감");
+
+        // 2) 구간마다 제 대사가 나온다. 경계값이 핵심이다.
+        Check(PartnerLineSheet.LineForPercent(full, 100) == "백", "100% 가 다른 칸을 봄");
+        Check(PartnerLineSheet.LineForPercent(full, 99) == "팔십", "99% 가 hp80 칸이 아님");
+        Check(PartnerLineSheet.LineForPercent(full, 80) == "팔십", "80% 경계가 어긋남");
+        Check(PartnerLineSheet.LineForPercent(full, 79) == "육십", "79% 가 어느 칸에도 안 걸림");
+        Check(PartnerLineSheet.LineForPercent(full, 60) == "육십", "60% 경계가 어긋남");
+        Check(PartnerLineSheet.LineForPercent(full, 59) == "삼십", "59% 가 어긋남");
+        Check(PartnerLineSheet.LineForPercent(full, 30) == "삼십", "30% 경계가 어긋남");
+        Check(PartnerLineSheet.LineForPercent(full, 29) == "십", "29% 가 어긋남");
+        Check(PartnerLineSheet.LineForPercent(full, 10) == "십", "10% 경계가 어긋남");
+        Check(PartnerLineSheet.LineForPercent(full, 9) == "하나", "9% 가 어긋남");
+        Check(PartnerLineSheet.LineForPercent(full, 1) == "하나", "1% 경계가 어긋남");
+
+        // 3) 쓰러졌으면 대사가 없다. 그건 대사가 아니라 쓰러질 때의 연출이다.
+        Check(PartnerLineSheet.LineForPercent(full, 0) == "", "0% 인데 말을 함");
+
+        // 4) 빈 칸이면 위 칸으로 올라가 대신 읽지 않는다.
+        //    그렇게 하면 빈사인데 "여유롭습니다" 를 말하게 된다.
+        PartnerLineSet meetOnly = sets[1];
+        Check(PartnerLineSheet.LineForPercent(meetOnly, 100) == "", "빈 칸인데 말을 함");
+        Check(PartnerLineSheet.LineForPercent(meetOnly, 5) == "", "빈 칸에서 위 칸을 대신 읽음");
+        Check(PartnerLineSheet.LineForPercent(null, 50) == "", "대사가 없는데 말을 함");
+
+        // 5) 백분율 계산. 내림이라야 한 대 맞고도 100% 대사를 하지 않는다.
+        Check(PartnerLineSheet.PercentOf(25, 25) == 100, "가득인데 100 이 아님");
+        Check(PartnerLineSheet.PercentOf(24, 25) == 96, $"내림이 아님 {PartnerLineSheet.PercentOf(24, 25)}");
+        Check(PartnerLineSheet.PercentOf(1, 25) == 4, "낮은 쪽 계산이 다름");
+        Check(PartnerLineSheet.PercentOf(0, 25) == 0, "0 이 0 이 아님");
+        Check(PartnerLineSheet.PercentOf(10, 0) == 0, "최대가 0 인데 나눔");
+
+        Check(PartnerLineSheet.FromEntities(null).Count == 0, "null 에서 대사가 나옴");
+
+        Console.WriteLine("  옮겨 담기 · 구간 경계 · 빈 칸은 말하지 않음 · 백분율 검사 완료");
+    }
+
+    // ── 늘어날 것들의 자리 ──────────────────────────────────────────────────
+    //
+    // 함정 · 특성 · 상태이상은 앞으로 계속 늘어난다. 늘릴 때 <b>고칠 곳이
+    // 한 군데인가</b>를 못 박아 둔다. 표에 없는 것이 조용히 도는 일도 함께 본다.
+    static void TestExtensionPoints()
+    {
+        Console.WriteLine("[늘어날 것들의 자리]");
+
+        // 1) 함정. 시트의 id2 로 찾고, 아직 안 만든 것은 아무 일도 하지 않는다.
+        foreach (string id in new[]
+                 { TrapIds.Hole, TrapIds.Warp, TrapIds.Blow, TrapIds.Dart,
+                   TrapIds.Gas, TrapIds.Spin, TrapIds.Restraint, TrapIds.Sticky })
+        {
+            Check(TrapActions.IsImplemented(id), $"{id} 함정에 동작이 없음");
+        }
+
+        // 아직 안 만든 함정(soil)과 없는 이름은 조용히 아무 일도 하지 않는다.
+        Check(!TrapActions.IsImplemented(TrapIds.Soil), "soil 이 이미 만들어져 있음");
+        Check(!TrapActions.IsImplemented("없는함정"), "모르는 함정에 동작이 붙음");
+        Check(!TrapActions.IsImplemented(null), "null 에 동작이 붙음");
+        Check(TrapActions.Find(TrapIds.Soil) == null, "안 만든 함정이 무언가를 함");
+
+        // 워프만 몸짓을 밖에서 돌리지 않는다. 안에서 이미 돌기 때문에
+        // 밖에서 또 돌리면 두 바퀴가 아니라 네 바퀴를 돈다.
+        Check(!TrapActions.PlaysAnimationFirst(TrapIds.Warp), "워프가 밖에서도 돎");
+        Check(TrapActions.PlaysAnimationFirst(TrapIds.Gas), "가스가 몸짓을 안 함");
+
+        // 2) 특성. 표에 있는 것만 실제로 무언가 한다.
+        Check(TraitEffects.IsImplemented(TraitEffects.SureHit), "필중에 동작이 없음");
+        Check(TraitEffects.IsImplemented(TraitEffects.DoubleStrike), "연격에 동작이 없음");
+        Check(!TraitEffects.IsImplemented(TraitEffects.Hoarder), "수집광이 이미 만들어져 있음");
+        Check(!TraitEffects.IsImplemented(99999), "없는 번호에 동작이 붙음");
+
+        var sureHit = new List<int> { TraitEffects.SureHit };
+        var none = new List<int> { TraitEffects.Hoarder, TraitEffects.Pure };
+
+        Check(TraitEffects.AlwaysHits(sureHit), "필중인데 안 맞음");
+        Check(!TraitEffects.AlwaysHits(none), "필중이 아닌데 반드시 맞음");
+        Check(!TraitEffects.StrikesTwice(sureHit), "필중이 두 번 때림");
+
+        // 여럿을 가진 동료. 하나라도 있으면 켜진다.
+        var both = new List<int>
+        {
+            TraitEffects.Healthy, TraitEffects.DoubleStrike, TraitEffects.SureHit,
+        };
+        Check(TraitEffects.AlwaysHits(both) && TraitEffects.StrikesTwice(both),
+              "여러 특성 중 하나만 먹음");
+
+        // 특성이 없는 동료(빈 목록·null)에 넘어지지 않는다.
+        Check(!TraitEffects.AlwaysHits(new List<int>()), "특성이 없는데 켜짐");
+        Check(!TraitEffects.AlwaysHits(null), "null 인데 켜짐");
+
+        // 3) 상태이상. 부르는 쪽은 효과가 아니라 <b>뜻</b>으로 묻는다.
+        var asleep = new List<ConditionEffect> { ConditionEffect.SkipTurn };
+        var confused = new List<ConditionEffect> { ConditionEffect.ScrambleDirection };
+        var poisoned = new List<ConditionEffect> { ConditionEffect.DamagePerTurn };
+
+        Check(!ConditionRules.CanAct(asleep), "잠들었는데 행동함");
+        Check(ConditionRules.CanAct(confused), "혼란인데 행동을 못 함");
+        Check(ConditionRules.CanAct(poisoned), "독인데 행동을 못 함");
+        Check(ConditionRules.CanAct(null) && ConditionRules.CanAct(new List<ConditionEffect>()),
+              "아무것도 안 걸렸는데 행동을 못 함");
+
+        Check(ConditionRules.ScramblesDirection(confused), "혼란인데 방향이 안 흔들림");
+        Check(!ConditionRules.ScramblesDirection(asleep), "잠인데 방향이 흔들림");
+
+        // 여럿 동시에 걸린 경우. 각각이 따로 먹는다.
+        var both2 = new List<ConditionEffect>
+        {
+            ConditionEffect.SkipTurn, ConditionEffect.ScrambleDirection,
+        };
+        Check(!ConditionRules.CanAct(both2) && ConditionRules.ScramblesDirection(both2),
+              "둘 다 걸렸는데 하나만 먹음");
+
+        Console.WriteLine("  함정 표 · 안 만든 것 · 특성 표 · 여럿 겹침 · 상태이상 뜻으로 묻기 검사 완료");
+    }
+
+    // ── 다 쓴 눌림(자리 바꾸기) ─────────────────────────────────────────────
+    //
+    // 자리를 바꾼 뒤 B 를 누른 채로 두면 다음 프레임에 곧바로 달리기가 걸린다.
+    // 자리만 바꾸려던 손이 통로 끝까지 내달리게 되는 자리다.
+    static void TestSpentPress()
+    {
+        Console.WriteLine("[다 쓴 눌림]");
+
+        var button = new ButtonPress();
+
+        // 누르고 있는 동안에는 계속 쓸 수 있다(달리기가 이 성질에 기댄다).
+        button.Update(down: true, held: true, up: false);
+        Check(button.HeldAvailable, "누른 순간에 못 씀");
+        button.Update(down: false, held: true, up: false);
+        Check(button.HeldAvailable, "누르고 있는데 못 씀");
+
+        // 다 쓰면 손을 떼기 전까지 잠긴다.
+        button.Spend();
+        Check(button.Held, "다 썼다고 눌림 자체가 풀림");
+        Check(!button.HeldAvailable, "다 썼는데 아직 쓸 수 있음");
+
+        button.Update(down: false, held: true, up: false);
+        Check(!button.HeldAvailable, "떼지도 않았는데 다시 쓸 수 있게 됨");
+
+        // 뗐다 다시 누르면 풀린다.
+        button.Update(down: false, held: false, up: true);
+        button.Update(down: true, held: true, up: false);
+        Check(button.HeldAvailable, "다시 눌렀는데 안 풀림");
+
+        // 다 쓴 눌림은 조준으로도 새지 않는다(Consume 을 함께 하기 때문).
+        var second = new ButtonPress();
+        second.Update(down: true, held: true, up: false);
+        second.Spend();
+        second.Update(down: false, held: false, up: true);
+        Check(!second.Tapped, "다 쓴 눌림이 조준으로 샘");
+
+        // Consume 만 한 것은 잠기지 않는다 — 달리기는 누른 채로 계속 먹어야 한다.
+        var third = new ButtonPress();
+        third.Update(down: true, held: true, up: false);
+        third.Consume();
+        Check(third.HeldAvailable, "Consume 만 했는데 잠김");
+
+        Console.WriteLine("  누른 동안 쓰기 · 다 쓰면 잠김 · 떼면 풀림 · 조준으로 안 샘 검사 완료");
+    }
+
+    // ── 동료 명단 ───────────────────────────────────────────────────────────
+    //
+    // 층을 넘을 때 씬을 다시 부르므로 동료 오브젝트도 사라진다. 여기 남는 값으로
+    // 다시 만들기 때문에, 이 목록이 곧 "누가 따라오고 있는가" 다.
+    static void TestPartnerRoster()
+    {
+        Console.WriteLine("[동료 명단]");
+
+        var roster = new PartnerRoster();
+        Check(roster.IsEmpty, "새 명단이 비어 있지 않음");
+
+        // 1) 들이면 체력이 가득 찬 채로 시작한다.
+        Check(roster.TryAdd(10001, 20), "동료를 못 들임");
+        Check(roster.Count == 1, $"인원이 다름 {roster.Count}");
+        Check(roster.Find(10001).Hp == 20 && roster.Find(10001).MaxHp == 20, "체력이 안 참");
+
+        // 2) 같은 종류를 둘 받지 않는다.
+        Check(!roster.TryAdd(10001, 20), "같은 동료를 둘 들임");
+        Check(roster.Count == 1, "같은 동료로 인원이 늘어남");
+
+        // 번호나 체력이 없는 것은 들이지 않는다(시트가 비었을 때).
+        Check(!roster.TryAdd(0, 20), "번호 0 을 들임");
+        Check(!roster.TryAdd(10002, 0), "체력 0 인 동료를 들임");
+
+        // 3) 피해. 0 이하가 되면 그 자리에서 목록에서 빠진다.
+        roster.TryAdd(10002, 10);
+        Check(!roster.Damage(10002, 4), "안 쓰러졌는데 쓰러졌다고 함");
+        Check(roster.Find(10002).Hp == 6, $"체력이 안 깎임 {roster.Find(10002).Hp}");
+        Check(roster.Damage(10002, 6), "0 이 됐는데 안 쓰러짐");
+        Check(!roster.Contains(10002), "쓰러졌는데 명단에 남음");
+        Check(!roster.Damage(99999, 1), "없는 동료가 맞음");
+
+        // 4) 계단. <b>계단과 같은 방</b>에 있는 동료만 따라 내려온다.
+        //    걸음 수로 자르면 경계가 화면에 안 보여서, 두고 온 이유를 알 수 없다.
+        //    방은 눈에 보이므로 "지금 내려가면 두고 간다" 가 한눈에 보인다.
+        var party = new PartnerRoster();
+        party.TryAdd(1, 10);
+        party.TryAdd(2, 10);
+        party.TryAdd(3, 10);
+
+        // 안쪽 칸 (5,5)~(9,9). RectInt 의 xMax 는 마지막 칸의 '다음' 이다.
+        var stairsRoom = new RectInt(5, 5, 5, 5);
+
+        var cells = new Dictionary<int, Vector3Int>
+        {
+            { 1, new Vector3Int(5, 5, 0) },   // 방 구석 — 경계 안
+            { 2, new Vector3Int(9, 9, 0) },   // 반대쪽 구석 — 경계 안
+            { 3, new Vector3Int(10, 9, 0) },  // 한 칸 밖 = 벽/통로
+        };
+
+        List<int> left = party.DropLeftBehind(stairsRoom, cells);
+        Check(left.Count == 1 && left[0] == 3, $"두고 온 동료가 다름 ({left.Count}명)");
+        Check(party.Contains(1) && party.Contains(2), "같은 방 동료가 빠짐");
+        Check(!party.Contains(3), "다른 자리의 동료가 따라옴");
+
+        // 자리를 모르는 동료(통로에 있거나 목록에 없음)는 두고 간다.
+        var stranded = new PartnerRoster();
+        stranded.TryAdd(7, 10);
+        stranded.TryAdd(8, 10);
+        List<int> lost = stranded.DropLeftBehind(
+            stairsRoom, new Dictionary<int, Vector3Int> { { 8, new Vector3Int(0, 0, 0) } });
+        Check(lost.Count == 2, $"방 밖 동료를 안 두고 감 ({lost.Count}명)");
+        Check(stranded.IsEmpty, "아무도 못 따라오는데 명단이 남음");
+
+        // 방을 못 찾았으면 아무도 두고 가지 않는다. 동료를 잃는 것은 되돌릴 수
+        // 없어서, 판단할 수 없을 때는 잃지 않는 쪽으로 둔다.
+        var safe = new PartnerRoster();
+        safe.TryAdd(9, 10);
+        List<int> none = safe.DropLeftBehind(new RectInt(0, 0, 0, 0), cells);
+        Check(none.Count == 0 && safe.Contains(9), "방을 못 찾았는데 동료를 잃음");
+
+        // 4-1) 경험치는 동료 자신의 것이다. 플레이어는 한 점도 받지 않는다
+        //      (그 판단은 Enemy.TakeDamageFromPartner 가 한다).
+        var grower = new PartnerRoster();
+        grower.TryAdd(50, 20);
+        PartnerMember member = grower.Find(50);
+
+        Check(member.Level == 1, "처음 레벨이 1 이 아님");
+        Check(member.ExpRemaining == member.ExpToNextLevel, "안 모았는데 남은 양이 줄어 있음");
+
+        Check(grower.AddExp(50, 3) == 0, "조금 모았는데 레벨이 오름");
+        Check(member.ExpRemaining == member.ExpToNextLevel - 3,
+              $"남은 양이 안 줄음 {member.ExpRemaining}");
+
+        int before = member.MaxHp;
+        int need = member.ExpRemaining;
+        Check(grower.AddExp(50, need) == 1, "채웠는데 레벨이 안 오름");
+        Check(member.Level == 2, $"레벨이 다름 {member.Level}");
+        Check(member.MaxHp == before + PartnerRoster.LevelUpHp, "레벨이 올랐는데 체력이 안 늘음");
+
+        // 레벨이 오르면 그만큼 회복된다. 안 그러면 한 번 깎인 체력이
+        // 판이 끝날 때까지 그대로 남는다.
+        Check(member.Hp == 20 + PartnerRoster.LevelUpHp, $"회복이 안 됨 {member.Hp}");
+
+        // 한 번에 여러 레벨도 오른다.
+        Check(grower.AddExp(50, 10000) >= 2, "많이 줬는데 한 레벨만 오름");
+
+        Check(grower.AddExp(50, 0) == 0, "0 을 줬는데 뭔가 일어남");
+        Check(grower.AddExp(99999, 100) == 0, "없는 동료가 자람");
+
+        // 4-2) 자연 회복. 동료에게는 이것 말고 회복 수단이 없다(가방이 없다).
+        var hurt = new PartnerRoster();
+        hurt.TryAdd(60, 10);
+        hurt.Damage(60, 6);
+        Check(hurt.Find(60).Hp == 4, "준비 실패: 안 깎임");
+
+        hurt.HealAll(1);
+        Check(hurt.Find(60).Hp == 5, $"자연 회복이 안 됨 {hurt.Find(60).Hp}");
+
+        hurt.HealAll(100);
+        Check(hurt.Find(60).Hp == hurt.Find(60).MaxHp, "최대를 넘어 회복됨");
+        hurt.HealAll(0);
+        Check(hurt.Find(60).Hp == hurt.Find(60).MaxHp, "0 을 줬는데 값이 변함");
+
+        // 4-3) 특기 쿨타임. 쓰고 나면 한동안 다시 청할 수 없다.
+        Check(hurt.IsActionReady(60, 0), "처음부터 특기를 못 씀");
+
+        hurt.StartActionCooldown(60, 100);
+        Check(!hurt.IsActionReady(60, 100), "쓴 그 턴에 또 쓸 수 있음");
+        Check(!hurt.IsActionReady(60, 100 + PartnerPlan.ActionCooldownTurns - 1),
+              "쿨타임이 덜 지났는데 쓸 수 있음");
+        Check(hurt.IsActionReady(60, 100 + PartnerPlan.ActionCooldownTurns),
+              "쿨타임이 지났는데 못 씀");
+
+        Check(!hurt.IsActionReady(99999, 0), "없는 동료가 특기를 씀");
+
+        // 5) 새 판. 비우지 않으면 죽은 판의 동료가 따라온다 —
+        //    에디터에서는 도메인 리로드가 가려 주고 빌드에서만 드러난다.
+        party.Clear();
+        Check(party.IsEmpty, "새 판인데 동료가 남음");
+
+        Console.WriteLine("  들이기 · 중복 · 피해로 빠짐 · 계단과 같은 방 · 새 판 비우기 검사 완료");
+    }
+
+    // ── 동료 판단 ───────────────────────────────────────────────────────────
+    //
+    // 적 AI 는 판정과 이동이 섞여 있어 에디터를 켜야만 확인할 수 있었고, 실제로
+    // "논리는 갈 수 있다는데 물리가 막는" 버그를 두 번 냈다. 동료는 판정을 떼어
+    // 두었으므로 여기서 전부 확인한다.
+    static void TestPartnerPlan()
+    {
+        Console.WriteLine("[동료 판단]");
+
+        Func<Vector3Int, bool> openField = _ => true;
+
+        // 걸음 수 지도를 대신하는 함수. 벽이 없으면 대각선 거리가 곧 걸음 수다.
+        Func<Vector3Int, Vector3Int, int> stepsTo =
+            (from, to) => PartnerPlan.ChebyshevDistance(from, to);
+
+        var player = new Vector3Int(10, 10, 0);
+        Func<Vector3Int, int> toPlayer = cell => stepsTo(cell, player);
+
+        // 1) 붙어 있는 적을 때린다.
+        var self = new Vector3Int(11, 10, 0);
+        var enemy = new Vector3Int(12, 10, 0);
+        PartnerTurn turn = PartnerPlan.Decide(
+            self, player, new List<Vector3Int> { enemy }, openField, toPlayer);
+
+        Check(turn.Action == PartnerAction.Attack, $"붙은 적을 안 때림 ({turn.Action})");
+        Check(turn.Target == enemy, "엉뚱한 칸을 때림");
+
+        // 2) 붙은 적이 둘이면 플레이어와도 붙은 쪽을 먼저 친다(협공).
+        //    각자 다른 적을 치면 어느 쪽도 빨리 안 쓰러진다.
+        var lone = new Vector3Int(12, 11, 0);          // 동료에만 붙음
+        var shared = new Vector3Int(11, 9, 0);         // 동료·플레이어 둘 다에 붙음
+        Check(PartnerPlan.IsAdjacent(player, shared), "준비 실패: 협공 대상이 플레이어에 안 붙음");
+        Check(!PartnerPlan.IsAdjacent(player, lone), "준비 실패: 단독 대상이 플레이어에 붙음");
+
+        turn = PartnerPlan.Decide(
+            self, player, new List<Vector3Int> { lone, shared }, openField, toPlayer);
+        Check(turn.Target == shared, $"협공 대상을 안 고름 {turn.Target}");
+
+        // 2-1) 무기가 안 닿는 적은 <b>목록에 들어오지도 않는다</b>(Partner.EnemyCells).
+        //
+        //      실제로 났던 버그다. 벽 두 개가 맞물린 대각선 틈으로 동료가 손을
+        //      뻗어 적을 때렸다. 무기가 어디까지 닿는지는 무기의 규칙이라
+        //      (TileRules.CanReachWithMelee) 판단 쪽에 심지 않았다 — 심었으면
+        //      원거리 무기를 든 동료가 생길 때 여기 예외를 파야 한다.
+        //
+        //      그래서 여기서 확인하는 것은 "빠진 적은 붙지 않은 것으로 다뤄지는가" 다.
+        var behindCorner = new Vector3Int(12, 11, 0);   // 동료(11,10)의 대각선
+        Check(PartnerPlan.IsAdjacent(self, behindCorner), "준비 실패: 대각선이 아님");
+
+        // 목록에서 빠지면 때리지 않고, 대신 돌아서 다가간다.
+        turn = PartnerPlan.Decide(
+            self, player, new List<Vector3Int>(), openField, toPlayer);
+        Check(turn.Action != PartnerAction.Attack, "빠진 적을 때림");
+
+        // 목록에 있으면 똑같이 때린다.
+        Check(PartnerPlan.PickAdjacentEnemy(
+                  self, player, new List<Vector3Int> { behindCorner }) == behindCorner,
+              "목록에 있는데 못 때림");
+
+        // 3) 가까운 적에게는 달려든다. 플레이어 곁을 지키느라 눈앞의 적을
+        //    지나치면 동료를 데리고 다닐 이유가 없다.
+        var far = new Vector3Int(14, 10, 0);           // 세 칸 밖 = 붙지 않았다
+        turn = PartnerPlan.Decide(
+            self, player, new List<Vector3Int> { far }, openField, toPlayer);
+
+        Check(turn.Action == PartnerAction.Move, $"가까운 적에게 안 다가감 ({turn.Action})");
+        Check(PartnerPlan.ChebyshevDistance(turn.Target, far)
+              < PartnerPlan.ChebyshevDistance(self, far), "적에게서 멀어짐");
+
+        // 너무 먼 적은 못 본 것으로 한다. 안 그러면 방 저쪽 적을 보고 흩어진다.
+        var tooFar = new Vector3Int(11 + PartnerPlan.EnemySeekDistance + 1, 10, 0);
+        turn = PartnerPlan.Decide(
+            self, player, new List<Vector3Int> { tooFar }, openField, toPlayer);
+        Check(turn.Action != PartnerAction.Attack, "먼 적을 때림");
+        Check(turn.Action == PartnerAction.Stay, $"먼 적을 보고 움직임 ({turn.Action})");
+
+        // 4) 적이 없고 플레이어와 멀어졌으면 따라간다.
+        var behind = new Vector3Int(10 + PartnerPlan.FollowDistance + 2, 10, 0);
+        turn = PartnerPlan.Decide(
+            behind, player, new List<Vector3Int>(), openField, toPlayer);
+
+        Check(turn.Action == PartnerAction.Move, $"멀어졌는데 안 따라옴 ({turn.Action})");
+        Check(toPlayer(turn.Target) < toPlayer(behind), "따라간다면서 멀어짐");
+
+        // 4-1) 한 칸만 벌어져도 따라붙는다.
+        //
+        //      실제로 났던 버그다. FollowDistance 가 2 였을 때 동료는 두 칸
+        //      떨어진 자리에서 멈췄고, 플레이어가 걸을 때마다 따라붙었다 멈췄다
+        //      하며 <b>간격이 늘 두 칸으로 벌어진 채</b>였다.
+        var oneGap = new Vector3Int(12, 10, 0);   // 플레이어(10,10)에서 두 칸
+        Check(toPlayer(oneGap) == 2, "준비 실패: 두 칸이 아님");
+
+        turn = PartnerPlan.Decide(
+            oneGap, player, new List<Vector3Int>(), openField, toPlayer);
+        Check(turn.Action == PartnerAction.Move, $"두 칸 벌어졌는데 안 따라옴 ({turn.Action})");
+        Check(toPlayer(turn.Target) == 1, $"따라왔는데 아직 두 칸 {turn.Target}");
+
+        // 5) 곁에 있으면 가만히 있는다. 계속 붙으려 들면 통로에서 서로 밀린다.
+        var beside = new Vector3Int(11, 11, 0);
+        Check(toPlayer(beside) <= PartnerPlan.FollowDistance, "준비 실패: 곁이 아님");
+        turn = PartnerPlan.Decide(
+            beside, player, new List<Vector3Int>(), openField, toPlayer);
+        Check(turn.Action == PartnerAction.Stay, $"곁인데 움직임 ({turn.Action})");
+
+        // 6) 갈 곳이 다 막혀 있으면 제자리. 여기서 없는 칸을 고르면 그대로
+        //    "논리는 갈 수 있다는데 물리가 막는" 그 버그가 된다.
+        turn = PartnerPlan.Decide(
+            behind, player, new List<Vector3Int>(), _ => false, toPlayer);
+        Check(turn.Action == PartnerAction.Stay, $"막혔는데 움직임 ({turn.Action})");
+
+        // 7) 고른 칸은 반드시 들어갈 수 있는 이웃 칸이어야 한다.
+        //    한 칸 건너뛰면 순간이동이 된다.
+        var occupied = new HashSet<Vector3Int> { new Vector3Int(11, 10, 0) };
+        Func<Vector3Int, bool> blocked = cell => !occupied.Contains(cell);
+
+        turn = PartnerPlan.Decide(
+            behind, player, new List<Vector3Int>(), blocked, toPlayer);
+        Check(turn.Action != PartnerAction.Move || !occupied.Contains(turn.Target),
+              "다른 생물이 선 칸을 고름");
+        Check(turn.Action != PartnerAction.Move
+              || PartnerPlan.ChebyshevDistance(behind, turn.Target) == 1,
+              $"한 걸음이 아님 {turn.Target}");
+
+        // 8) 거리 세는 법. 대각선이 한 걸음이라 이 게임의 이동과 맞아야 한다.
+        Check(PartnerPlan.ChebyshevDistance(new Vector3Int(0, 0, 0), new Vector3Int(1, 1, 0)) == 1,
+              "대각선이 한 걸음이 아님");
+        Check(PartnerPlan.IsAdjacent(new Vector3Int(0, 0, 0), new Vector3Int(1, 1, 0)),
+              "대각선이 붙은 것이 아님");
+        Check(!PartnerPlan.IsAdjacent(new Vector3Int(0, 0, 0), new Vector3Int(0, 0, 0)),
+              "같은 칸을 붙었다고 함");
+
+        // ── 아직 남일 때 ──────────────────────────────────────────────────
+        //
+        // 플레이어를 쫓지도 적을 치지도 않고 서성인다. 그리고 두 턴에 한 걸음이라
+        // (무거움) 플레이어가 쫓아가서 말을 걸 수 있다.
+
+        // 9) 무거움. 남은 두 턴에 한 번, 동료가 되면 매 턴 움직인다.
+        Check(PartnerPlan.ActsThisTurn(0, joined: false), "첫 턴부터 못 움직임");
+        Check(!PartnerPlan.ActsThisTurn(1, joined: false), "남인데 매 턴 움직임");
+        Check(PartnerPlan.ActsThisTurn(2, joined: false), "두 턴이 지났는데 안 움직임");
+
+        for (int t = 0; t < 6; t++)
+            Check(PartnerPlan.ActsThisTurn(t, joined: true), $"동료가 된 뒤 {t}턴에 멈춤");
+
+        // 10) 서성이기. 갈 수 있는 칸 하나를 고르되 한 걸음이어야 한다.
+        var wanderer = new Vector3Int(5, 5, 0);
+        for (float roll = 0f; roll <= 1f; roll += 0.1f)
+        {
+            PartnerTurn step = PartnerPlan.DecideNeutral(wanderer, openField, roll);
+
+            Check(step.Action == PartnerAction.Move, $"서성이지 않음 (roll {roll})");
+            Check(PartnerPlan.ChebyshevDistance(wanderer, step.Target) == 1,
+                  $"한 걸음이 아님 {step.Target}");
+        }
+
+        // 굴린 값이 여덟 칸에 고루 퍼진다. 한 곳만 나오면 서성이는 것이 아니다.
+        var seenCells = new HashSet<Vector3Int>();
+        for (float roll = 0f; roll < 1f; roll += 0.05f)
+            seenCells.Add(PartnerPlan.DecideNeutral(wanderer, openField, roll).Target);
+        Check(seenCells.Count == 8, $"고르는 칸이 여덟이 아님 ({seenCells.Count})");
+
+        // 11) 왔던 칸으로 곧바로 되돌아가지 않는다. 두 칸을 오가면 고장 난 것처럼 보인다.
+        var back = new Vector3Int(4, 5, 0);
+        for (float roll = 0f; roll < 1f; roll += 0.05f)
+        {
+            PartnerTurn step = PartnerPlan.DecideNeutral(wanderer, openField, roll, back);
+            Check(step.Target != back, $"왔던 칸으로 되돌아감 (roll {roll})");
+        }
+
+        // 그것밖에 없으면 어쩔 수 없이 되돌아간다. 갇혀서 아무것도 못 하면 안 된다.
+        Func<Vector3Int, bool> onlyBack = cell => cell == back;
+        PartnerTurn forced = PartnerPlan.DecideNeutral(wanderer, onlyBack, 0.5f, back);
+        Check(forced.Action == PartnerAction.Move && forced.Target == back,
+              "갈 곳이 그것뿐인데 멈춤");
+
+        // 11-1) 말 고르기. 셋 중 하나만 나오고, 특기는 드물다.
+        var talkCount = new Dictionary<PartnerTalk, int>
+        {
+            { PartnerTalk.Hp, 0 }, { PartnerTalk.Action, 0 }, { PartnerTalk.Exp, 0 },
+        };
+
+        const int TalkRolls = 9000;
+        for (int i = 0; i < TalkRolls; i++)
+            talkCount[PartnerPlan.PickTalk((i + 0.5f) / TalkRolls, actionAvailable: true)]++;
+
+        foreach (var pair in talkCount)
+            Check(pair.Value > 0, $"{pair.Key} 가 한 번도 안 나옴");
+
+        // 특기는 다른 둘보다 드물어야 한다. 자주 나오면 특별할 것이 없어진다.
+        Check(talkCount[PartnerTalk.Action] < talkCount[PartnerTalk.Hp],
+              $"특기가 체력 대사보다 잦음 {talkCount[PartnerTalk.Action]}");
+        Check(talkCount[PartnerTalk.Action] < talkCount[PartnerTalk.Exp],
+              $"특기가 경험치 대사보다 잦음 {talkCount[PartnerTalk.Action]}");
+
+        // 특기를 못 쓸 때는 아예 안 고른다. 고르면 없는 대사가 뜬다.
+        for (float roll = 0f; roll <= 1f; roll += 0.02f)
+            Check(PartnerPlan.PickTalk(roll, actionAvailable: false) != PartnerTalk.Action,
+                  $"못 쓰는데 특기를 고름 (roll {roll})");
+
+        // 11-2) 놓치면 탐색으로 돌아간다.
+        //
+        //       예전에는 걸음 수 지도만 보고 어디에 있든 정확히 찾아왔다.
+        //       워프로 맵 반대편에 떨어져도 곧장 오는 것이 개연성이 없었다.
+
+        // 보이면 무조건 따라간다 — 처음 만나는 순간이 여기다.
+        Check(PartnerPlan.KeepsFollowing(wasFollowing: false, playerVisible: true, stepsToPlayer: 99),
+              "보이는데 안 따라감");
+
+        // 안 보여도 따라가던 중이면 이어 간다. 통로에서는 둘 다 방 밖이라
+        // '보인다' 가 false 인데, 그것만으로 끊으면 통로에 들어서자마자 멈춘다.
+        Check(PartnerPlan.KeepsFollowing(true, playerVisible: false, stepsToPlayer: 3),
+              "통로에서 따라가기가 끊김");
+        Check(PartnerPlan.KeepsFollowing(
+                  true, false, PartnerPlan.FollowGiveUpDistance),
+              "경계 안인데 놓침");
+
+        // 너무 멀어지거나(워프) 갈 수 없게 되면 놓친 것으로 본다.
+        Check(!PartnerPlan.KeepsFollowing(
+                  true, false, PartnerPlan.FollowGiveUpDistance + 1),
+              "너무 멀어졌는데 계속 따라감");
+        Check(!PartnerPlan.KeepsFollowing(true, false, -1), "갈 수 없는데 계속 따라감");
+
+        // 놓친 뒤에는 다시 만날 때까지 스스로 찾아가지 않는다.
+        Check(!PartnerPlan.KeepsFollowing(false, false, 3), "안 보이는데 저절로 따라붙음");
+
+        // 11-3) 탐색. 목표를 정해 놓고 곧게 걷는다 — 서성이는 것과 다르다.
+        var goal = new Vector3Int(20, 5, 0);
+        PartnerTurn search = PartnerPlan.DecideSearch(wanderer, goal, openField);
+
+        Check(search.Action == PartnerAction.Move, "탐색인데 안 움직임");
+        Check(PartnerPlan.ChebyshevDistance(search.Target, goal)
+              < PartnerPlan.ChebyshevDistance(wanderer, goal), "목표에서 멀어짐");
+        Check(PartnerPlan.ChebyshevDistance(wanderer, search.Target) == 1, "한 걸음이 아님");
+
+        // 닿았으면 멈춘다 — 부르는 쪽이 그걸 보고 새 목표를 고른다.
+        Check(PartnerPlan.DecideSearch(goal, goal, openField).Action == PartnerAction.Stay,
+              "이미 닿았는데 움직임");
+        Check(PartnerPlan.DecideSearch(wanderer, goal, _ => false).Action == PartnerAction.Stay,
+              "막혔는데 움직임");
+
+        // 11-4) 소리. 싸움·던지기가 난 자리를 한동안 기억한다.
+        var noise = new NoiseBoard();
+        Check(!noise.TryGetLatest(0, out _), "아무 일도 없었는데 소리가 들림");
+
+        var spot = new Vector3Int(7, 9, 0);
+        noise.Report(spot, 100);
+
+        Check(noise.TryGetLatest(100, out Vector3Int heard) && heard == spot,
+              "난 소리를 못 들음");
+        Check(noise.TryGetLatest(100 + NoiseBoard.FadeTurns, out _), "아직인데 사라짐");
+        Check(!noise.TryGetLatest(100 + NoiseBoard.FadeTurns + 1, out _),
+              "오래된 소리가 안 사라짐");
+
+        // 나중 것이 앞의 것을 덮는다. 목록으로 쌓으면 "어느 것부터" 를 또 정해야 한다.
+        var later = new Vector3Int(1, 1, 0);
+        noise.Report(later, 105);
+        Check(noise.TryGetLatest(105, out Vector3Int last) && last == later,
+              "나중 소리가 앞의 것을 안 덮음");
+
+        // 새 층. 지난 층의 소리를 따라가면 갈 수 없는 자리를 향해 걷는다.
+        noise.Clear();
+        Check(!noise.TryGetLatest(105, out _), "새 층인데 지난 소리가 남음");
+
+        // 11-5) 방향 사다리. 적과 동료가 함께 쓰는 것이고,
+        //       앞으로 도망·거리 벌리기·아이템 다가가기도 여기서 나온다.
+        var from = new Vector3Int(5, 5, 0);
+        var to = new Vector3Int(8, 5, 0);
+
+        var ladder = new List<Vector2>(MoveIntent.Toward(from, to));
+        Check(ladder.Count > 1, $"물러설 방향이 없음 ({ladder.Count})");
+        Check(ladder[0] == Vector2.right, $"첫 방향이 목표 쪽이 아님 {ladder[0]}");
+
+        // 한 칸만 보고 고르면 벽 앞에서 갈 곳이 없어진다. 물러설 길이 있어야 한다.
+        Check(ladder.Contains(Vector2.up) && ladder.Contains(Vector2.down),
+              "축 방향인데 옆으로 비켜 볼 길이 없음");
+        Check(ladder[ladder.Count - 1] == Vector2.left, "막다른 길에서 뒤로 물러설 길이 없음");
+
+        // 대각선은 가로·세로로 나눠 시도한다.
+        var diagonal = new List<Vector2>(
+            MoveIntent.Toward(from, new Vector3Int(8, 8, 0)));
+        Check(diagonal[0] == new Vector2(1, 1), "대각선이 첫 방향이 아님");
+        Check(diagonal.Contains(new Vector2(1, 0)) && diagonal.Contains(new Vector2(0, 1)),
+              "대각선이 막혔을 때 나눠 시도하지 않음");
+
+        // 같은 칸이면 갈 곳이 없다.
+        Check(new List<Vector2>(MoveIntent.Toward(from, from)).Count == 0, "제자리인데 방향이 나옴");
+
+        // 도망은 반대쪽부터. 등 뒤가 막혔을 때 옆으로 샐 길도 함께 나온다.
+        var flee = new List<Vector2>(MoveIntent.AwayFrom(from, to));
+        Check(flee[0] == Vector2.left, $"도망인데 반대쪽이 아님 {flee[0]}");
+        Check(flee.Count > 1, "도망칠 다른 길이 없음");
+
+        // 거리 벌리기 — 가까우면 물러나고 멀면 다가가고 딱 맞으면 가만히.
+        var near = new Vector3Int(6, 5, 0);
+        var wayOff = new Vector3Int(15, 5, 0);
+        Check(new List<Vector2>(MoveIntent.KeepDistance(from, near, 3))[0] == Vector2.left,
+              "너무 가까운데 안 물러남");
+        Check(new List<Vector2>(MoveIntent.KeepDistance(from, wayOff, 3))[0] == Vector2.right,
+              "너무 먼데 안 다가감");
+        Check(new List<Vector2>(MoveIntent.KeepDistance(from, to, 3)).Count == 0,
+              "거리가 딱 맞는데 움직이려 함");
+
+        // 11-6) 순찰 목표 — <b>지금 방의 문</b>만 고른다.
+        //       층 전체에서 고르면 벽 너머가 목표가 되어 영영 닿지 못한다.
+        var rooms = new List<Rect> { new Rect(0, 0, 10, 10) };
+        var exits = new List<Vector3>
+        {
+            new Vector3(5, 10, 0),      // 이 방의 문(벽 위)
+            new Vector3(50, 50, 0),     // 저 멀리 다른 방의 문
+        };
+        var seen = new List<Vector2>();
+
+        Check(PatrolPlan.TryPickTarget(
+                  new Vector2(5, 5), rooms, exits, seen, 0.5f, out Vector3 door),
+              "방 안인데 목표를 못 고름");
+        Check(door.x == 5 && door.y == 10, $"다른 방의 문을 고름 {door}");
+
+        // 통로 한가운데면 고를 수 없다. 방에 들어설 때까지 그냥 나아간다.
+        Check(!PatrolPlan.TryPickTarget(
+                  new Vector2(30, 30), rooms, exits, seen, 0.5f, out _),
+              "통로인데 목표를 고름");
+
+        // 다녀온 문은 뺀다 — 그러지 않으면 두 문 사이를 오간다.
+        // 이 방의 문이 하나뿐이라 후보가 비고, 그때는 기억을 지우고 다시 돈다.
+        var oneDoor = new List<Vector2> { new Vector2(5, 10) };
+        Check(PatrolPlan.TryPickTarget(
+                  new Vector2(5, 5), rooms, exits, oneDoor, 0.5f, out _),
+              "다 돌았는데 다시 돌지 못함");
+        Check(oneDoor.Count == 0, "후보가 없는데 기억을 안 지움");
+
+        Check(!PatrolPlan.TryPickTarget(
+                  new Vector2(5, 5), rooms, new List<Vector3>(), seen, 0.5f, out _),
+              "문이 없는데 목표를 고름");
+
+        // 12) 사방이 막혔으면 제자리.
+        Check(PartnerPlan.DecideNeutral(wanderer, _ => false, 0.5f).Action == PartnerAction.Stay,
+              "막혔는데 움직임");
+
+        Console.WriteLine(
+            "  붙은 적 · 협공 · 달려들기 · 따라오기 · 곁에서 멈춤 · 막힘 · 한 걸음 · 무거움 · 서성이기 검사 완료");
     }
 
     class AsciiGrid : IWalkableGrid
