@@ -72,6 +72,9 @@ public class Trap : MonoBehaviour
             return false;
         }
 
+        // 실제로 작동한 것만 센다. 밟았지만 아무 일도 없었던 것은 '걸린' 것이 아니다.
+        GameManager.ReportRecord(RecordStat.TrapsTriggered);
+
         Activate();
         return true;
     }

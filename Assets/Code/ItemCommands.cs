@@ -38,6 +38,40 @@ public class ItemCommands
     private static GroundObjectRegistry Ground => GameManager.Ground;
     private static PlayerStats Stats => GameManager.Stats;
 
+    /// <summary>
+    /// 가방에 넣고, 처음 보는 종류면 도감에도 적는다.
+    ///
+    /// Bag.TryAdd 가 들어오는 자리 셋(줍기·바닥에서 바로 장착·발밑에서 바로 줍기)이
+    /// 전부 이걸 거치게 해서, 도감에 적는 일을 한 곳에서만 신경 쓰면 된다.
+    /// 교환(Bag.Replace)은 자리를 갈아 끼우는 것이라 여기와 갈래가 달라 SwapWithGround
+    /// 에서 따로 적는다.
+    /// </summary>
+    private static bool AddToBag(GameObject item)
+    {
+        if (!Bag.TryAdd(item)) return false;
+
+        GameManager.RecordItemDiscovery(ItemInstance.IdOf(item));
+        GameManager.ReportRecord(RecordStat.ItemsPicked);
+
+        // 주운 그 물건의 강화 수치가 여태 본 것 중 가장 높을 수 있다.
+        // 손으로 강화하는 길이 아직 없어서, 지금은 이것이 유일하게 세는 자리다.
+        GameManager.ReportRecord(RecordStat.BestEnhancement, ItemInstance.EnhancementOf(item));
+        return true;
+    }
+
+    /// <summary>
+    /// 먹은 것이면 기록에 센다. 먹는 것과 쓰는 것은 시트의 갈래로 갈린다.
+    ///
+    /// <b>지우기 전에 불러야 한다.</b> 오브젝트를 지운 뒤에는 무엇이었는지
+    /// 물어볼 길이 없다.
+    /// </summary>
+    private static void ReportIfFood(GameObject item)
+    {
+        ItemDescription description = ItemInstance.DescriptionOf(item);
+        if (description != null && description.itemType == ItemKind.Food)
+            GameManager.ReportRecord(RecordStat.FoodEaten);
+    }
+
     /// <summary>가방을 연다. 닫히거나 아이템을 쓸 때까지 조작이 잠긴다.</summary>
     public void OpenBag() => OpenItemMenu(startOnGround: false);
 
@@ -144,6 +178,7 @@ public class ItemCommands
         {
             int amount = GoldPile.AmountOf(groundItem);
             Stats.AddGold(amount);
+            GameManager.ReportRecord(RecordStat.MostGold, Stats.Gold);
 
             Ground.Remove(groundItem.transform.position);
             groundItem.SetActive(false);
@@ -159,7 +194,7 @@ public class ItemCommands
         }
 
         TakeFromGround(groundItem);
-        Bag.TryAdd(groundItem);
+        AddToBag(groundItem);
 
         // 이름은 GameObject 이름이 아니라 정의에서 읽고, 강화 수치를 붙여 보여 준다
         // (ItemInstance.FullNameOf). 프리팹 이름이 시트와 한 글자만 어긋나도
@@ -194,6 +229,7 @@ public class ItemCommands
         // 강화 수치가 붙어 있으면 함께 보여야 교환한 결과를 알 수 있다.
         string takenName = ItemInstance.FullNameOf(groundItem);
         TakeFromGround(groundItem);
+        GameManager.RecordItemDiscovery(ItemInstance.IdOf(groundItem));
 
         // 몸에 걸치고 있던 것을 내려놓게 되면 반드시 벗겨야 한다.
         GameObject given = Bag.Replace(index, groundItem);
@@ -236,7 +272,7 @@ public class ItemCommands
             }
 
             TakeFromGround(groundItem);
-            Bag.TryAdd(groundItem);
+            AddToBag(groundItem);
             ToggleEquip(groundItem, itemName);
             yield break;
         }
@@ -250,6 +286,7 @@ public class ItemCommands
         }
 
         Ground.Remove(groundItem.transform.position);
+        ReportIfFood(groundItem);
         Object.Destroy(groundItem);
         InputFocus.ReturnToPlayer();
 
@@ -341,6 +378,9 @@ public class ItemCommands
         switch (action)
         {
             case BagMenuController.ItemAction.Use:
+                // 지우기 전에 무엇이었는지 센다. 지운 뒤에는 갈래를 물어볼 수 없다.
+                ReportIfFood(item);
+
                 Object.Destroy(item);
                 InputFocus.ReturnToPlayer();
 
@@ -423,7 +463,7 @@ public class ItemCommands
         Object.DontDestroyOnLoad(item);
         item.name = item.name.Replace("(Clone)", string.Empty);
 
-        Bag.TryAdd(item);
+        AddToBag(item);
         Ground.Remove(item.transform.position);
 
         game.ShowMessage(GameMessage.ItemPickedUp, ItemInstance.FullNameOf(item));

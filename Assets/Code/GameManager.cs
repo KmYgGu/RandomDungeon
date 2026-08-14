@@ -161,6 +161,170 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public static MarkBook Marks { get; } = new MarkBook();
 
+    private static ItemEncyclopedia itemDex;
+
+    /// <summary>
+    /// 지금까지 만나 본 아이템 도감.
+    ///
+    /// Marks 와 반대로 <b>판을 넘어도, 새 게임을 시작해도 남는다</b> —
+    /// PlayerPrefs 에 저장되는 값이라 ResetRun 이 비우지 않는다.
+    ///
+    /// 처음 물어볼 때 한 번만 PlayerPrefs 를 읽는다(ExcelSheets.Data 와 같은
+    /// 늦은 초기화). GameManager 의 static 생성자에서 곧바로 읽으면, PlayerPrefs
+    /// 가 없는 환경(Tools/Verify 처럼 Unity 없이 도는 테스트)에서는 이 클래스의
+    /// static 필드를 건드리기만 해도 예외가 난다 — 도감과 상관없는 테스트까지 죽는다.
+    /// </summary>
+    public static ItemEncyclopedia ItemDex
+    {
+        get
+        {
+            if (itemDex == null) itemDex = EncyclopediaStorage.LoadItems();
+            return itemDex;
+        }
+    }
+
+    /// <summary>
+    /// 처음 보는 아이템이면 도감에 적고 바로 저장한다. 이미 아는 것이면 아무 일도 없다.
+    /// </summary>
+    public static void RecordItemDiscovery(int itemId)
+    {
+        if (ItemDex.Record(itemId)) EncyclopediaStorage.SaveItems(ItemDex);
+    }
+
+    private static EnemyEncyclopedia enemyDex;
+
+    /// <summary>
+    /// 적을 종류마다 몇 마리 쓰러뜨렸는지. ItemDex 와 같은 이유로 늦게 읽는다.
+    /// </summary>
+    public static EnemyEncyclopedia EnemyDex
+    {
+        get
+        {
+            if (enemyDex == null) enemyDex = EncyclopediaStorage.LoadEnemies();
+            return enemyDex;
+        }
+    }
+
+    /// <summary>
+    /// 적 한 마리를 쓰러뜨렸다고 도감에 적고 바로 저장한다.
+    ///
+    /// 누가 잡았는지는 가리지 않는다 — 플레이어가 때렸든 동료가 잡았든 던진 것에
+    /// 맞아 쓰러졌든, 도감에서는 똑같이 "쓰러뜨린 한 마리" 다. 경험치는 누가
+    /// 잡았는지를 따지지만(Enemy.TakeDamageFromPartner) 그건 셈이 다른 이야기다.
+    /// </summary>
+    public static void RecordEnemyDefeat(int monsterId)
+    {
+        if (EnemyDex.Record(monsterId) > 0) EncyclopediaStorage.SaveEnemies(EnemyDex);
+    }
+
+    private static PartnerEncyclopedia partnerDex;
+
+    /// <summary>
+    /// 만나 본 동료와 그 호감도. ItemDex 와 같은 이유로 늦게 읽는다.
+    /// </summary>
+    public static PartnerEncyclopedia PartnerDex
+    {
+        get
+        {
+            if (partnerDex == null) partnerDex = EncyclopediaStorage.LoadPartners();
+            return partnerDex;
+        }
+    }
+
+    /// <summary>
+    /// 동료와 동행하기 시작했다고 도감에 적는다. 이미 아는 동료면 아무 일도 없다.
+    ///
+    /// <b>호감도는 여기서 올리지 않는다.</b> 무엇으로 오를지 아직 정하지 않았기
+    /// 때문이다(PartnerEncyclopedia 주석). 정해지면 그것을 세는 곳에서
+    /// PartnerDex.AddAffinity 를 부르고, 여기처럼 곧바로 저장하면 된다.
+    /// </summary>
+    public static void RecordPartnerMet(int partnerId)
+    {
+        if (PartnerDex.RecordMet(partnerId)) EncyclopediaStorage.SavePartners(PartnerDex);
+    }
+
+    private static RecordBook records;
+
+    /// <summary>지난 모험들의 기록. ItemDex 와 같은 이유로 늦게 읽는다.</summary>
+    public static RecordBook Records
+    {
+        get
+        {
+            if (records == null) records = EncyclopediaStorage.LoadRecords();
+            return records;
+        }
+    }
+
+    /// <summary>
+    /// 가방 속 모든 것의 판매가 총합. 점수의 '소지품 매각 가격' 몫이다.
+    ///
+    /// 몸에 걸친 장비도 가방 안에 있으므로(Equipment 주석) 따로 더하지 않는다.
+    /// 돈은 가방에 들어가지 않고 소지금으로 세므로 여기 섞이지 않는다.
+    /// </summary>
+    private static int BagSellTotal()
+    {
+        int total = 0;
+        for (int i = 0; i < Bag.Count; i++)
+        {
+            ItemDescription description = ItemInstance.DescriptionOf(Bag[i]);
+            if (description != null) total += description.SellPrice;
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// 기록을 하나 적고 곧바로 저장한다.
+    ///
+    /// <b>기록을 세는 모든 자리가 이 하나를 부른다.</b> 쌓는 방법(최고값이냐 누적이냐)은
+    /// 표가 정하므로(RecordCatalog) 부르는 쪽은 값만 넘기면 된다.
+    ///
+    /// 그때마다 저장하는 것은 도감과 같은 이유다 — 죽는 순간에 몰아서 저장하려 들면
+    /// 그 판의 기록이 통째로 날아가는 길이 생기는데, 기록은 죽어도 남는 것이 요점이다.
+    /// </summary>
+    public static void ReportRecord(RecordStat stat, int value = 1)
+    {
+        if (Records.Report(stat, value)) EncyclopediaStorage.SaveRecords(Records);
+    }
+
+    /// <summary>
+    /// 이번 판에서 공격이 연달아 몇 번 빗나갔는가.
+    ///
+    /// 최고 기록만 남기면 되지만 <b>지금 몇 번째인지</b>는 판이 도는 동안 들고
+    /// 있어야 해서 여기 둔다. 맞히는 순간 0 으로 돌아간다. ResetRun 이 비운다.
+    /// </summary>
+    private static int missStreak;
+
+    /// <summary>공격이 빗나갔다. 연속 횟수를 세고 최고 기록을 갱신한다.</summary>
+    public static void ReportMiss()
+    {
+        missStreak++;
+        ReportRecord(RecordStat.LongestMissStreak, missStreak);
+    }
+
+    /// <summary>공격이 맞았다. 연속 빗나감이 끊긴다.</summary>
+    public static void ReportHit() => missStreak = 0;
+
+    /// <summary>
+    /// 모험이 끝났다. 점수를 매겨 기록에 남기고, 그 점수를 돌려준다.
+    ///
+    /// <b>여기가 점수가 만들어지는 유일한 자리다.</b> 도중에 부를 수 있게 열어 두면
+    /// "지금 돌아가면 몇 점" 을 계산하며 노는 게임이 된다(RunScore 주석).
+    /// </summary>
+    private static RunScore FinishRun(bool cleared)
+    {
+        RunScore score = RunScore.Of(Stage, Stats.Gold, BagSellTotal(), cleared);
+
+        ReportRecord(cleared ? RecordStat.Clears : RecordStat.Deaths);
+        ReportRecord(RecordStat.BestScore, score.Total);
+        ReportRecord(RecordStat.LastScore, score.Total);
+        ReportRecord(RecordStat.DeepestStage, score.Stage);
+        ReportRecord(RecordStat.LastStage, score.Stage);
+        ReportRecord(RecordStat.LongestRun, TurnCount);
+        ReportRecord(RecordStat.HighestLevel, Stats.Level);
+
+        return score;
+    }
+
     /// <summary>
     /// 방금 어디서 소리가 났는가. 싸움·던지기·함정이 적고, 플레이어를 놓친
     /// 동료가 듣는다(앞으로 몇몇 적도 듣는다).
@@ -286,6 +450,10 @@ public class GameManager : MonoBehaviour
         // (Gear 를 비우기 때문에 BuildCollaborators 보다 반드시 앞에 와야 한다.)
         ResetRun();
 
+        // 새 판이 시작됐다. 죽지 않고 껐다 켜도 시도한 것은 시도한 것이다.
+        // ResetRun 이 아니라 여기서 세는 이유는 그쪽 주석에 적어 두었다.
+        ReportRecord(RecordStat.RunsStarted);
+
         BuildCollaborators();
         StartNextStage();
     }
@@ -341,6 +509,74 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public void OpenStatus() => statusScreen.OpenStatus();
 
+    /// <summary>
+    /// 번호로 아이템 정의 애셋을 찾는다. 없으면 null.
+    ///
+    /// ItemDescription 애셋은 Resources 밖(Assets/Prefab/Items/itemData)에 있어서
+    /// Resources.Load 로는 못 찾는다. 대신 MapMake 가 층을 만들 때 쓰는
+    /// itemPrefabs 를 뒤진다 — 도감에 적힌 번호는 전부 실제로 바닥에 나온
+    /// 적이 있는 것들이라(그래야 주울 수 있었으므로), 이 배열 안에 반드시 있다.
+    /// </summary>
+    public ItemDescription FindItemDescription(int itemId)
+    {
+        if (MapMake == null || MapMake.itemPrefabs == null) return null;
+
+        foreach (GameObject prefab in MapMake.itemPrefabs)
+        {
+            ItemDescription description = ItemInstance.DescriptionOf(prefab);
+            if (description != null && description.id == itemId) return description;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 번호로 적 정의 애셋을 찾는다. 없으면 null.
+    ///
+    /// <b>그림을 얻으려고 찾는 것이다.</b> 이름·수치·설명은 시트에서 바로 나오므로
+    /// (MonsterCatalog) 이것이 null 이어도 도감은 그림 자리만 비운 채 잘 돈다.
+    ///
+    /// 인스펙터에 끌어다 놓은 목록을 먼저 보고, 없으면 지금 쓰는 적 프리팹을 본다.
+    /// 프리팹이 하나뿐이던 시절에는 목록을 채워 두지 않아도 그 하나는 나오게 하려는 것이다.
+    /// </summary>
+    public MonsterDescription FindMonsterDescription(int monsterId)
+    {
+        if (monsterId == 0 || MapMake == null) return null;
+
+        if (MapMake.monsterDescriptions != null)
+        {
+            foreach (MonsterDescription description in MapMake.monsterDescriptions)
+            {
+                if (description != null && description.id == monsterId) return description;
+            }
+        }
+
+        Enemy prefab = MapMake.monsterPrefab != null
+            ? MapMake.monsterPrefab.GetComponent<Enemy>()
+            : null;
+
+        return prefab != null && prefab.description != null && prefab.description.id == monsterId
+            ? prefab.description
+            : null;
+    }
+
+    /// <summary>
+    /// 번호로 동료 정의 애셋을 찾는다. 없으면 null.
+    ///
+    /// 적과 같은 이유로 <b>그림 때문에</b> 찾는다(FindMonsterDescription 참고).
+    /// 인스펙터에 끌어다 놓은 동료 프리팹 하나를 본다. 여러 종류를 두게 되면
+    /// 적처럼 목록 칸이 생길 자리다.
+    /// </summary>
+    public PartnerDescription FindPartnerDescription(int partnerId)
+    {
+        if (partnerId == 0 || MapMake == null || MapMake.partnerPrefab == null) return null;
+
+        Partner prefab = MapMake.partnerPrefab.GetComponent<Partner>();
+
+        return prefab != null && prefab.description != null && prefab.description.id == partnerId
+            ? prefab.description
+            : null;
+    }
+
 
     private void Update()
     {
@@ -393,6 +629,15 @@ public class GameManager : MonoBehaviour
         Log.Clear();
         Conditions.Clear();
         Marks.Clear();
+
+        // 연속 빗나감은 판 단위다. 지난 판의 것이 이어지면 한 번도 그만큼 연달아
+        // 빗나간 적이 없는데도 기록이 선다.
+        missStreak = 0;
+
+        // '던전 시도 횟수' 는 여기서 세지 않는다. 이 메서드는 값만 되돌리는 순수한
+        // 일이라 Unity 없이도 도는데(Tools/Verify 가 실제로 그렇게 부른다), 기록을
+        // 적으면 PlayerPrefs 를 건드리게 되어 거기서 죽는다. 판이 시작되는 것을
+        // 실제로 아는 자리는 Awake 이므로 세는 일도 그쪽에 둔다.
 
         Stage = 0;              // 뒤이어 StartNextStage() 가 1층으로 올린다.
         TurnCount = 0;
@@ -492,11 +737,21 @@ public class GameManager : MonoBehaviour
         imageComponent.color = LevelImageColor;
         LevelTextMeshPro.text = "게임 오버";
 
+        // 점수는 여기서 처음 매겨진다. 가방을 비우거나 층을 올리는 일이 뒤따르기
+        // 전에 매겨야 하므로, 정리보다 반드시 앞에 온다.
+        RunScore score = FinishRun(cleared: false);
+
         // 죽기 직전에 누르고 있던 키가 곧바로 화면을 넘겨 버리지 않도록 잠시 막는다.
         yield return new WaitForSeconds(GameOverHoldTime);
 
         while (!GameInput.ActionPressed)
             yield return null;
+
+        GameInput.ConsumeAction();
+
+        // 점수 내역. 게임 오버 문구를 확인한 뒤에 보여 준다 — 죽은 순간에 숫자가
+        // 함께 뜨면 무엇에 맞고 죽었는지가 가려진다.
+        yield return ShowScore(score);
 
         // 다음 Awake 가 새 판으로 인식하도록, 씬을 넘어 살아남는 것들을 모두 정리한다.
         instance = null;
@@ -504,6 +759,26 @@ public class GameManager : MonoBehaviour
         Destroy(gameObject);
 
         SceneManager.LoadScene("SampleScene");
+    }
+
+    /// <summary>
+    /// 점수 내역을 큰 판에 띄우고, 확인을 받을 때까지 기다린다.
+    ///
+    /// 상태창의 기록 화면과 같은 창(ShowPage)을 쓴다. 끝 화면에만 쓰는 창을 따로
+    /// 만들면 같은 숫자를 두 가지 모습으로 보여 주게 된다.
+    /// </summary>
+    private IEnumerator ShowScore(RunScore score)
+    {
+        LevelTextMeshPro.text = string.Empty;
+        menuPanel.ShowPage(score.BuildBreakdown());
+
+        // 이 화면을 연 그 키가 곧바로 넘겨 버리지 않도록 한 프레임 넘긴다.
+        yield return null;
+
+        while (!GameInput.ActionPressed && !GameInput.AssistPressed)
+            yield return null;
+
+        menuPanel.Hide();
     }
 
     // ── 메시지 ─────────────────────────────────────────────────────────────
