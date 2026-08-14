@@ -140,12 +140,64 @@ public class PlayerStats
     }
 
     /// <summary>
-    /// 자연 회복량. 힘이 셀수록 많이 회복한다.
+    /// 한 턴에 차오르는 양. 힘이 셀수록 많다. <b>1 보다 작을 수 있다.</b>
+    ///
+    /// ── 여기서 버리면 안 된다 ─────────────────────────────────────────
+    /// 한때 <c>(int)</c> 로 잘라서 돌려주었다. 그런데 시작 상태(최대 체력 20,
+    /// 힘 8)의 회복량이 하필 <b>정확히 1.0</b> 이라, 독침에 힘이 1만 깎여도
+    /// 0.875 가 되어 통째로 버려졌다 — <b>회복이 아예 멈췄다.</b>
+    ///
+    /// 게다가 레벨이 올라 최대 체력이 23 이 되면 저절로 다시 1 을 넘겨서,
+    /// "한동안 안 되다가 언젠가 되는" 것처럼 보였다. 에러는 나지 않는다.
+    ///
+    /// 실제로 몇 턴에 1 이 차는지는 RecoverNaturally 가 쌓아서 정한다.
     /// </summary>
-    public int NaturalRecoveryAmount()
+    public float NaturalRecoveryAmount()
     {
         float recoveryRate = (Strength / (float)InitialStrength) * 0.05f;
-        return (int)(MaxHp * recoveryRate);
+        return MaxHp * recoveryRate;
+    }
+
+    /// <summary>
+    /// 아직 체력 1 이 되지 못하고 남아 있는 회복분.
+    ///
+    /// 힘이 깎이면 한 턴에 1 이 안 차므로(0.875 같은 값) 남는 몫을 여기 모아 두었다가
+    /// 1 이 되는 턴에 한꺼번에 올린다. 판이 바뀌면 PlayerStats 를 새로 만들므로
+    /// 저절로 비워진다(GameManager.ResetRun).
+    /// </summary>
+    private float recoveryCarry;
+
+    /// <summary>
+    /// 자연 회복을 한 턴만큼 진행한다. 실제로 오른 체력(정수)을 돌려준다.
+    ///
+    /// ── 왜 체력을 소수로 두지 않는가 ──────────────────────────────────
+    /// 소수를 체력에 그대로 더하면 체력이 15.875 같은 값이 된다. 그러면 그리는
+    /// 쪽마다 어떻게 보여 줄지를 따로 정하게 되는데, 실제로 <b>게이지 바는 소수
+    /// 그대로, 숫자는 내림</b>으로 갈려서 같은 값이 서로 다르게 보였다 — 바만
+    /// 움직이고 숫자는 그대로 있는 것처럼 보인다.
+    ///
+    /// 체력은 정수로 두고 <b>덜 찬 몫만 안에서 쌓는다.</b> 그러면 화면 두 곳이
+    /// 언제나 같은 값을 읽고, 회복 속도는 그대로 힘에 비례한다 —
+    /// 힘 7 이면 두 턴에 한 번, 힘 1 이면 여덟 턴에 한 번 오른다.
+    /// </summary>
+    public int RecoverNaturally()
+    {
+        if (IsHpFull)
+        {
+            // 가득 찼으면 모아 둔 몫도 버린다. 들고 있으면 다음에 다치자마자
+            // 지난번에 쉬어 둔 만큼이 곧바로 붙는다.
+            recoveryCarry = 0f;
+            return 0;
+        }
+
+        recoveryCarry += NaturalRecoveryAmount();
+
+        int whole = Mathf.FloorToInt(recoveryCarry);
+        if (whole <= 0) return 0;
+
+        recoveryCarry -= whole;
+        Heal(whole);
+        return whole;
     }
 
     /// <summary>

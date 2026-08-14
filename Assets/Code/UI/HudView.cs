@@ -71,6 +71,10 @@ public class HudView
 
         if (stageText != null) stageText.text = $"B {stage}F";
         if (levelText != null) levelText.text = $"LV {stats.Level}";
+        // 체력은 정수로만 오르내린다(PlayerStats.RecoverNaturally 가 덜 찬 몫을
+        // 안에서 쌓아 준다). 그래서 여기서 자를 것이 없고, 아래 게이지 바도
+        // 같은 값을 읽는다 — 한때 바는 소수, 숫자는 내림으로 갈려서
+        // <b>바만 움직이고 숫자는 그대로</b> 있는 것처럼 보였다.
         if (hpText != null) hpText.text = $"HP {stats.Hp}/{stats.MaxHp}";
         // 만복도는 여기 두지 않는다. 상태창(스페이스)에서 "만복도 n/N" 으로 볼 수 있고,
         // 정말 급할 때 — 굶주림이 한계에 닿았을 때 — 는 따로 알리는 방법을 붙일 예정이다.

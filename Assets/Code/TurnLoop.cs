@@ -240,7 +240,9 @@ public class TurnLoop
 
             if (GameManager.TurnCount % RecoveryTickInterval == 0)
             {
-                if (!GameManager.Stats.IsHpFull) GameManager.Stats.Heal(GameManager.Stats.NaturalRecoveryAmount());
+                // 한 턴에 1 이 안 차는 만큼은 안에 쌓였다가 나중에 한꺼번에 오른다
+                // (PlayerStats.RecoverNaturally). 가득 찼는지도 그쪽이 본다.
+                GameManager.Stats.RecoverNaturally();
 
                 // 동료도 함께 아문다. 가방이 없어 약을 못 먹고 층을 넘어도 차지
                 // 않으므로, 이것이 없으면 오래 데리고 다닐수록 반드시 쓰러진다.

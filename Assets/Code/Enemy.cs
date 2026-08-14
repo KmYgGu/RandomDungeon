@@ -366,11 +366,24 @@ public class Enemy : MovingObject
             //
             // 이제 "누가 있는가" 는 찜한 칸과 아직 안 움직인 적으로 판단한다
             // (IsEnemyAt · IsPlayerAt). 물리에 묻지 않으므로 프레임 순서를 타지 않는다.
+            // 그 칸에 중립 동료가 서 있으면 <b>자리를 맞바꾼다.</b>
+            // 플레이어가 하는 것과 같다(Player.TrySwapWithPartner).
+            Partner neutral = NeutralPartnerAt(destination);
+            if (neutral != null) neutral.SwapTo(origin);
+
             MoveTo(destination);
             MovedThisTurn = true;
 
             // 같은 턴의 다른 적이 이 칸을 노리지 않도록 찜해 둔다.
             GameManager.instance.enemyPositions.Add(destination);
+
+            // <b>자리를 바꿨으면 내가 비운 칸도 찜해야 한다.</b> 그 칸에는 방금
+            // 동료가 들어섰는데, 동료는 이미 움직인 것으로 표시되어(SwapTo)
+            // "아직 안 움직인 것" 을 훑는 검사에서 빠진다. 찜해 두지 않으면
+            // 뒤따르는 적이 빈 칸으로 보고 그리로 들어와 또 겹친다.
+            // 플레이어 쪽에서 PlayerPosition 을 갱신해야 했던 것과 같은 종류다.
+            if (neutral != null) GameManager.instance.enemyPositions.Add(origin);
+
             if (rememberPath) visited.Add(destination);
 
             return true;
@@ -383,12 +396,43 @@ public class Enemy : MovingObject
     {
         if (IsEnemyAt(destination)) return false;
         if (IsPlayerAt(destination)) return false;
+        if (IsJoinedPartnerAt(destination)) return false;
         if (IsBlockedByTile(destination)) return false;
         if (IsBlockedByWater(destination)) return false;
         if (!CanMoveDiagonally(transform.position, direction)) return false;
         if (rememberPath && visited.Contains(destination)) return false;
         return true;
     }
+
+    /// <summary>
+    /// 그 칸에 선 동료. 없으면 null.
+    ///
+    /// <b>합류 여부로 대접이 갈린다.</b> 동료는 적의 상대라 밀고 들어가지 않고
+    /// 그 앞에서 싸운다(AdjacentPartner). 중립은 싸울 상대가 아니라 길에 서 있는
+    /// 사람일 뿐이라, 플레이어처럼 자리를 맞바꾸고 지나간다.
+    ///
+    /// 이미 움직인 동료도 좌표는 지금 것이므로 그대로 견주면 된다.
+    /// </summary>
+    private Partner PartnerAt(Vector2 destination, bool joined)
+    {
+        foreach (Partner partner in GameManager.instance.partners)
+        {
+            if (partner == null || !partner.gameObject.activeInHierarchy) continue;
+            if (partner.Joined != joined) continue;
+
+            if (Vector2.Distance(partner.transform.position, destination) < SameCellThreshold)
+                return partner;
+        }
+        return null;
+    }
+
+    /// <summary>플레이어 편이 된 동료가 서 있는가. 밀고 들어가지 않는다.</summary>
+    private bool IsJoinedPartnerAt(Vector2 destination)
+        => PartnerAt(destination, joined: true) != null;
+
+    /// <summary>아직 남인 동료. 자리를 맞바꿔 지나간다.</summary>
+    private Partner NeutralPartnerAt(Vector2 destination)
+        => PartnerAt(destination, joined: false);
 
     /// <summary>
     /// 가고 싶은 방향을 먼저, 막혔을 때의 우회 방향을 그다음에 내놓는다.
@@ -650,6 +694,9 @@ public class Enemy : MovingObject
         if (gained > 0)
             GameManager.instance.ShowMessage(GameMessage.PartnerLeveledUp, attacker.DisplayName);
 
+        // 경험치는 동료만 받지만 도감은 누가 잡았든 똑같이 센다.
+        RecordDefeat();
+
         GameManager.instance.RemoveEnemyList(this);
         Destroy(gameObject);
     }
@@ -746,9 +793,13 @@ public class Enemy : MovingObject
     {
         if (Random.value >= HitChance)
         {
+            // 연달아 빗나간 횟수를 센다. 맞히면 아래에서 끊긴다.
+            GameManager.ReportMiss();
             GameManager.instance.ShowMessage(GameMessage.AttackMissed);
             return;
         }
+
+        GameManager.ReportHit();
 
         int randomFactor = Random.Range(-1, 3);
         int damage = Mathf.Max((playerAttack - defense) + randomFactor, 1);
@@ -758,6 +809,7 @@ public class Enemy : MovingObject
             damage = (int)System.Math.Round(damage * CriticalMultiplier);
 
         ThisHp -= damage;
+        GameManager.ReportRecord(RecordStat.BiggestHitDealt, damage);
 
         GameManager.instance.ShowMessage(
             isCritical ? GameMessage.CriticalHit : GameMessage.EnemyDamaged,
@@ -774,9 +826,30 @@ public class Enemy : MovingObject
 
         gameObject.name = gameObject.name.Replace("(Clone)", string.Empty);
 
+        RecordDefeat();
+
         GameManager.instance.RemoveEnemyList(this);
         GameManager.instance.RewardForKill(DisplayName, ExpReward);
 
         gameObject.SetActive(false);
+    }
+
+    /// <summary>
+    /// 조회에 쓰는 번호. 정의가 없으면 0 이며, 어떤 표에도 걸리지 않는다.
+    /// (ItemInstance.IdOf 와 같은 규칙이다.)
+    /// </summary>
+    public int MonsterId => description != null ? description.id : 0;
+
+    /// <summary>
+    /// 도감에 한 마리 적는다.
+    ///
+    /// <b>쓰러지는 길이 둘</b>이라 양쪽에서 부른다 — 이쪽(CheckDead)은 플레이어가
+    /// 때렸거나 던진 것에 맞은 경우고, 동료가 잡은 경우는 TakeDamageFromPartner 가
+    /// 목록에서 빼고 오브젝트를 바로 지워 버려서 이곳을 지나지 않는다.
+    /// </summary>
+    private void RecordDefeat()
+    {
+        GameManager.RecordEnemyDefeat(MonsterId);
+        GameManager.ReportRecord(RecordStat.EnemiesDefeated);
     }
 }
