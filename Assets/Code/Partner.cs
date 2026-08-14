@@ -304,7 +304,12 @@ public class Partner : MovingObject
     {
         if (Joined || description == null) return false;
 
-        return GameManager.Party.TryAdd(description.id, description.Hp);
+        if (!GameManager.Party.TryAdd(description.id, description.Hp)) return false;
+
+        // 도감에 "만나 봤다" 를 적는다. 목록에 이름이 뜨는 조건이 이것이다.
+        // 승낙한 뒤에만 적는다 — 물어보기만 하고 거절당한 것은 동행이 아니다.
+        GameManager.RecordPartnerMet(description.id);
+        return true;
     }
 
     /// <summary>대사 묶음. 아직 안 적어 둔 동료면 null 이고, 그때는 말하지 않는다.</summary>

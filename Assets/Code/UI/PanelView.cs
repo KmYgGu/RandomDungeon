@@ -14,8 +14,10 @@ using UnityEngine.UI;
 /// 저마다 손으로 맞춰 두어서 하나를 고치면 나머지와 어긋났다.
 ///
 /// 이제 창은 하나뿐이고, 무엇을 보여 줄지에 따라 모습만 바꾼다.
-///   목록 모드 - 글자만 보여 주고 글자에 맞춰 상자가 줄었다 늘었다 한다
-///   설명 모드 - 그림·이름·가격·본문을 켜고 쓸 수 있는 영역을 통째로 쓴다
+///   목록 모드  - 글자만 보여 주고 글자에 맞춰 상자가 줄었다 늘었다 한다
+///   설명 모드  - 그림·이름·가격·본문을 켜고 쓸 수 있는 영역을 통째로 쓴다
+///   도감 모드  - 그림·이름·세어 온 값·수치·소개를 네 층으로 놓는다. 적과 동료가
+///                같은 것을 쓴다(자식들을 씬이 아니라 코드로 만든다. CreatureDetailPanel 참고)
 ///
 /// 커서는 글자 안에 "&gt; " 로 넣는다. 예전에는 가방 목록만 커서 열을 따로 두고
 /// 나머지는 글자 안에 넣어서, 같은 목록인데 만드는 방법이 둘이었다.
@@ -76,6 +78,9 @@ public class PanelView
     /// <summary>목록 모드로 떠 있는가. 다른 모드로 바뀌면 기억한 것을 버린다.</summary>
     private bool showingList;
 
+    /// <summary>도감 상세(적·동료 공용). 처음 열 때 코드가 만든다.</summary>
+    private CreatureDetailPanel creatureDetail;
+
     public PanelView(
         GameObject panel,
         TextMeshProUGUI listLabel,
@@ -124,6 +129,7 @@ public class PanelView
             return;
 
         SetDetailActive(false);
+        SetCreatureDetailActive(false);
         if (listLabel != null) listLabel.gameObject.SetActive(true);
 
         panel.SetActive(true);
@@ -152,6 +158,7 @@ public class PanelView
         if (panel == null) return;
 
         if (listLabel != null) listLabel.gameObject.SetActive(false);
+        SetCreatureDetailActive(false);
         SetDetailActive(true);
         panel.SetActive(true);
 
@@ -185,6 +192,7 @@ public class PanelView
         if (panel == null) return;
 
         SetDetailActive(false);
+        SetCreatureDetailActive(false);
         if (listLabel != null) listLabel.gameObject.SetActive(true);
 
         panel.SetActive(true);
@@ -196,6 +204,54 @@ public class PanelView
 
         listLabel.text = text;
         Place(FillAvailable, Vector2.zero, CenterAnchor);
+    }
+
+    /// <summary>
+    /// 도감의 상세를 띄운다. 아이템 설명처럼 쓸 수 있는 영역을 통째로 쓴다.
+    ///
+    /// 자리가 다섯이라 글자량에 따라 창을 줄이면 배치가 어그러진다는 점이
+    /// ShowDetail 과 같다.
+    ///
+    /// <b>무엇을 보여 주는지는 모른다.</b> 적이든 동료든 다 만들어진 글자를 받는다
+    /// (CreatureDetailPanel 주석).
+    /// </summary>
+    public void ShowCreatureDetail(
+        string title, Sprite sprite, string counter, string stats, string about)
+    {
+        if (panel == null) return;
+
+        if (listLabel != null) listLabel.gameObject.SetActive(false);
+        SetDetailActive(false);
+        panel.SetActive(true);
+
+        showingList = false;   // 목록 모드를 떠났다
+
+        // 창을 먼저 제자리에 놓는다. 자식들이 창 크기의 비율로 자리를 잡으므로,
+        // 크기가 정해지기 전에 그리면 첫 프레임에 엉뚱한 자리에 뜬다.
+        Place(FillAvailable, Vector2.zero, CenterAnchor);
+
+        EnsureCreatureDetail();
+        if (creatureDetail == null) return;
+
+        creatureDetail.SetVisible(true);
+        creatureDetail.Render(title, sprite, counter, stats, about);
+    }
+
+    private void EnsureCreatureDetail()
+    {
+        if (creatureDetail != null || panelRect == null) return;
+
+        // 글꼴은 목록 글자에서 빌린다. 여기만 다른 글꼴이면 겉돌아 보인다.
+        creatureDetail = new CreatureDetailPanel(panelRect, listLabel != null ? listLabel.font : null);
+    }
+
+    private void SetCreatureDetailActive(bool visible)
+    {
+        // 한 번도 연 적이 없으면 만들지 않는다. 감추는 데 만들 이유가 없다.
+        if (creatureDetail == null && !visible) return;
+
+        if (visible) EnsureCreatureDetail();
+        creatureDetail?.SetVisible(visible);
     }
 
     /// <summary>
@@ -224,6 +280,10 @@ public class PanelView
     public void Hide()
     {
         if (panel != null) panel.SetActive(false);
+
+        // 창을 감추면 자식도 함께 감춰지지만, 표시는 꺼 둔다. 다음에 목록으로 열릴 때
+        // 켜진 채 남아 있으면 목록 글자 위에 지난 적의 그림이 겹쳐 뜬다.
+        SetCreatureDetailActive(false);
 
         showingList = false;
     }

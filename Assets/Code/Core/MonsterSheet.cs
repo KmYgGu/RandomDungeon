@@ -2,19 +2,28 @@
 using UnityEngine;
 
 /// <summary>
-/// 적이 얼마나 자주 나오는가. 코드가 아는 것만 시트에서 고를 수 있다.
+/// 이 적이 아이템을 얼마나 잘 떨어뜨리는가. 코드가 아는 것만 시트에서 고를 수 있다.
 ///
 /// 시트의 rate 열이 이것을 고른다. 실제 확률(몇 %)은 코드가 정하는데,
 /// 층마다 사정이 달라서 숫자 자체를 시트에 박아 두면 층 구성을 바꿀 때마다
-/// 표의 모든 줄을 다시 만져야 하기 때문이다. 시트는 "흔한 편/드문 편" 만 정한다.
+/// 표의 모든 줄을 다시 만져야 하기 때문이다. 시트는 "잘 떨군다/잘 안 떨군다" 만 정한다.
+///
+/// ── 한때 출현 빈도였다 ────────────────────────────────────────────
+/// 이 열은 오래 뜻이 정해지지 않은 채였고(ExcelData.MonsterEntity.rate 의 옛 주석),
+/// 코드는 그동안 출현 빈도로 읽고 있었다. 다만 <b>실제로 출현에 쓰인 적은 없다</b> —
+/// 값을 담아 두고 인스펙터에 보여 주기만 했다. 그래서 뜻을 드롭 확률로 옮겨도
+/// 게임 동작이 달라지는 곳이 없다.
+///
+/// 떨어뜨리는 것 자체는 아직 없다. 도감이 이 값을 보여 주는 것이 먼저고,
+/// 실제로 떨구는 규칙이 붙을 때 이 값을 확률로 바꿔 쓰면 된다.
 /// </summary>
-public enum SpawnRate
+public enum ItemDropRate
 {
-    /// <summary>흔하다.</summary>
+    /// <summary>잘 떨어뜨린다.</summary>
     High,
     /// <summary>보통.</summary>
     Medium,
-    /// <summary>드물다.</summary>
+    /// <summary>잘 떨어뜨리지 않는다.</summary>
     Low,
 }
 
@@ -45,10 +54,10 @@ public class MonsterDefinition
     /// </summary>
     public bool DealsCritical;
 
-    /// <summary>출현 빈도.</summary>
-    public SpawnRate Rate;
+    /// <summary>아이템 드롭 확률.</summary>
+    public ItemDropRate Rate;
 
-    /// <summary>갈래("몬스터"). 앞으로 도감을 나눌 때 쓴다.</summary>
+    /// <summary>갈래("몬스터"). 도감이 종족으로 보여 준다.</summary>
     public string Category;
 
     /// <summary>도감에 띄울 글.</summary>
@@ -138,16 +147,32 @@ public static class MonsterSheet
     private static string Clean(string cell)
         => cell == null ? string.Empty : cell.Trim(Junk);
 
-    public static SpawnRate ParseRate(string cell, int id, List<string> problems = null)
+    public static ItemDropRate ParseRate(string cell, int id, List<string> problems = null)
     {
         switch (Clean(cell))
         {
-            case "상": return SpawnRate.High;
-            case "중": return SpawnRate.Medium;
-            case "하": return SpawnRate.Low;
+            case "상": return ItemDropRate.High;
+            case "중": return ItemDropRate.Medium;
+            case "하": return ItemDropRate.Low;
             default:
-                problems?.Add($"{id} 번의 출현 빈도 '{Clean(cell)}' 를 모릅니다. '중' 으로 봅니다.");
-                return SpawnRate.Medium;
+                problems?.Add($"{id} 번의 드롭 확률 '{Clean(cell)}' 를 모릅니다. '중' 으로 봅니다.");
+                return ItemDropRate.Medium;
+        }
+    }
+
+    /// <summary>
+    /// 화면에 보여 줄 말. 읽는 곳(ParseRate)과 나란히 두어 둘이 어긋나지 않게 한다.
+    ///
+    /// 시트에 적는 글자와 같은 글자를 쓴다. 도감에서 '상' 을 본 사람이 시트를 열면
+    /// 같은 칸을 바로 찾을 수 있어야 하기 때문이다.
+    /// </summary>
+    public static string NameOf(ItemDropRate rate)
+    {
+        switch (rate)
+        {
+            case ItemDropRate.High: return "상";
+            case ItemDropRate.Low: return "하";
+            default: return "중";
         }
     }
 }

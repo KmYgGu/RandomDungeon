@@ -127,7 +127,7 @@ public class MonsterDescriptionEditor : Editor
         SheetPreview.DrawRow("체력 · 공격 · 방어",
             $"{definition.Hp} · {definition.Attack} · {definition.Defense}");
         SheetPreview.DrawRow("경험치", definition.Exp.ToString());
-        SheetPreview.DrawRow("출현 빈도", definition.Rate.ToString());
+        SheetPreview.DrawRow("아이템 드롭 확률", MonsterSheet.NameOf(definition.Rate));
         SheetPreview.DrawRow("갈래", definition.Category);
 
         EditorGUILayout.LabelField("설명");

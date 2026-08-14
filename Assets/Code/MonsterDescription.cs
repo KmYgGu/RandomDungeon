@@ -43,8 +43,11 @@ public class MonsterDescription : ScriptableObject
     /// <summary>치명타를 내는 적인가. 확률은 Player 가 정한다.</summary>
     public bool DealsCritical => Definition?.DealsCritical ?? false;
 
-    /// <summary>출현 빈도. 표에 없으면 '보통' 으로 본다.</summary>
-    public SpawnRate Rate => Definition?.Rate ?? SpawnRate.Medium;
+    /// <summary>아이템 드롭 확률. 표에 없으면 '중' 으로 본다.</summary>
+    public ItemDropRate Rate => Definition?.Rate ?? ItemDropRate.Medium;
+
+    /// <summary>갈래(종족). 도감이 보여 준다.</summary>
+    public string Category => Definition?.Category ?? string.Empty;
 
     /// <summary>도감에 띄울 글.</summary>
     public string Description => Definition?.Description ?? string.Empty;
