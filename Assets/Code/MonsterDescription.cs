@@ -24,10 +24,13 @@ public class MonsterDescription : ScriptableObject
     /// (0 아래 · 1 위 · 2 왼 · 3 오른 · 4 왼아래 · 5 오아래 · 6 왼위 · 7 오른위),
     /// 플레이어가 그 규칙을 쓰고 있으므로 적도 같은 순서를 따른다.
     ///
-    /// 그때까지는 이 한 장을 실제 화면에도 쓴다(SpriteApplier). 모션이 붙으면
-    /// 이 필드는 대표 그림으로만 남는다.
+    /// directionalSprites가 있으면 게임에서는 방향별 그림을 쓴다.
+    /// 방향별 그림이 없는 적은 이 대표 그림을 실제 화면에도 쓴다.
     /// </summary>
     public Sprite sprite;
+
+    /// <summary>아래·위·왼쪽·오른쪽·왼아래·오른아래·왼위·오른위 순서. 비어 있으면 대표 그림을 쓴다.</summary>
+    public Sprite[] directionalSprites;
 
     /// <summary>시트에서 찾은 줄. 번호가 표에 없으면 null.</summary>
     public MonsterDefinition Definition => MonsterCatalog.Find(id);

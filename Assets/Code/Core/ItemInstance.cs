@@ -94,7 +94,7 @@ public class ItemInstance : MonoBehaviour
     /// 센다. 강화 수치까지 넣어 견주면 나무몽둥이+2 와 나무몽둥이가 떨어져 놓인다.
     /// </summary>
     public static string FullNameOf(GameObject item)
-        => DisplayNameOf(item) + ItemEnhancement.Suffix(EnhancementOf(item));
+        => DisplayNameOf(item) + ItemEnhancement.Suffix(EnhancementOf(item)) + ShopGood.PriceLabel(item);
 
     /// <summary>
     /// 이름 앞에 붙일 표식 글자. 적어 둔 것이 없으면 빈 문자열.

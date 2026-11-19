@@ -14,19 +14,284 @@ static class Program
         if (!condition) { Console.WriteLine("  FAIL: " + label); failures++; }
     }
 
+    static void TestCameraFollow()
+    {
+        Console.WriteLine("[중앙 고정 걷기 표시]");
+        Check(CameraFollowMotion.Progress(0f, .1f, false) == 0f, "출발 위치 유지");
+        Check(Math.Abs(CameraFollowMotion.Progress(.05f, .1f, false) - .5f) < .00001f, "걷기 중간 좌표");
+        Check(CameraFollowMotion.Progress(.1f, .1f, false) == 1f, "한 걸음 시간에 도착");
+        Check(CameraFollowMotion.Progress(.2f, .1f, false) == 1f, "도착점 초과 금지");
+        Check(CameraFollowMotion.Progress(0f, .1f, true) == 1f, "달리기/이벤트 즉시 완료");
+        Check(CameraFollowMotion.Progress(0f, 0f, false) == 1f, "연출 시간 0 처리");
+        foreach (int fps in new[] { 30, 60, 144 })
+        {
+            float previous = 0f;
+            for (int frame = 0; frame <= fps; frame++)
+            {
+                float progress = CameraFollowMotion.Progress((float)frame / fps, .1f, false);
+                Check(progress >= previous && progress <= 1f, "걷기 단조 진행 " + fps);
+                previous = progress;
+            }
+            Check(previous == 1f, "프레임 속도와 무관하게 도착 " + fps);
+        }
+    }
+    static void TestMinimapContours()
+    {
+        Console.WriteLine("[미니맵 단일 윤곽]");
+        Check(MinimapContours.Build(Array.Empty<Vector2Int>()).Count == 0, "빈 지도");
+        var room = new[] { new Vector2Int(0, 0), new Vector2Int(1, 0),
+            new Vector2Int(0, 1), new Vector2Int(1, 1) };
+        var rectangle = MinimapContours.Build(room);
+        Check(rectangle.Count == 4, "2x2 방은 네 선만 표시하고 내부 이음새 없음");
+        Check(rectangle.TrueForAll(s => Math.Abs(s.End.x - s.Start.x) + Math.Abs(s.End.y - s.Start.y) == 2),
+            "직선 가장자리는 타일별로 끊지 않고 합침");
+        Check(MinimapContours.Build(new[] { room[0], room[1], room[2] }).Count == 6, "오목한 L자 코너");
+        Check(MinimapContours.Build(new[] { room[0], room[0] }).Count == 4, "중복 칸으로 이중 선 생성 금지");
+        var ring = new List<Vector2Int>();
+        for (int y = 0; y < 3; y++)
+        for (int x = 0; x < 3; x++)
+            if (x != 1 || y != 1) ring.Add(new Vector2Int(x, y));
+        Check(MinimapContours.Build(ring).Count == 8, "가운데 빈 공간의 실제 경계 보존");
+
+        bool allCorrect = true, noDuplicates = true, joined = true;
+        for (int mask = 0; mask < 512; mask++)
+        {
+            var cells = new HashSet<Vector2Int>();
+            for (int i = 0; i < 9; i++)
+                if ((mask & (1 << i)) != 0) cells.Add(new Vector2Int(i % 3 - 1, i / 3 - 1));
+            var segments = MinimapContours.Build(cells);
+            var actual = new HashSet<(bool horizontal, int x, int y)>();
+            foreach (var edge in segments)
+            {
+                bool horizontal = edge.Start.y == edge.End.y;
+                int length = horizontal ? edge.End.x - edge.Start.x : edge.End.y - edge.Start.y;
+                allCorrect &= length > 0 && (horizontal || edge.Start.x == edge.End.x);
+                for (int i = 0; i < length; i++)
+                    noDuplicates &= actual.Add((horizontal, edge.Start.x + (horizontal ? i : 0),
+                        edge.Start.y + (horizontal ? 0 : i)));
+                foreach (var other in segments)
+                    if (edge.End == other.Start) joined &= (edge.Start.y == edge.End.y) != (other.Start.y == other.End.y);
+            }
+            var expected = new HashSet<(bool horizontal, int x, int y)>();
+            for (int y = -1; y <= 2; y++)
+            for (int x = -1; x <= 2; x++)
+            {
+                if (cells.Contains(new Vector2Int(x, y)) != cells.Contains(new Vector2Int(x, y - 1)))
+                    expected.Add((true, x, y));
+                if (cells.Contains(new Vector2Int(x, y)) != cells.Contains(new Vector2Int(x - 1, y)))
+                    expected.Add((false, x, y));
+            }
+            allCorrect &= actual.SetEquals(expected);
+        }
+        Check(allCorrect, "3x3 전체 512배치: 실제 열린 영역의 경계만 그림");
+        Check(noDuplicates, "모든 배치에서 중복 선과 겹치는 내부 경계 없음");
+        Check(joined, "이어지는 같은 직선의 불필요한 분할 없음");
+    }
+    static void TestMinimapSymbols()
+    {
+        Console.WriteLine("[미니맵 여섯 기호]");
+        var kinds = new[] { MinimapSymbols.Kind.Player, MinimapSymbols.Kind.Partner,
+            MinimapSymbols.Kind.Enemy, MinimapSymbols.Kind.Item, MinimapSymbols.Kind.Trap, MinimapSymbols.Kind.Stairs };
+        var expectedColors = new[] { new Color32(255,255,255,255), new Color32(255,255,0,255),
+            new Color32(255,0,0,255), new Color32(0,0,255,255), new Color32(255,0,0,255), new Color32(0,0,255,255) };
+        int[] counts = { 21, 25, 25, 25, 9, 16 };
+        for (int k = 0; k < kinds.Length; k++)
+        {
+            Color32 actual = MinimapSymbols.ColorOf(kinds[k]);
+            Color32 expected = expectedColors[k];
+            Check(actual.r == expected.r && actual.g == expected.g && actual.b == expected.b && actual.a == expected.a,
+                "기호 색 " + kinds[k]);
+            int filled = 0;
+            bool symmetric = true;
+            for (int y = 0; y < 5; y++)
+            for (int x = 0; x < 5; x++)
+            {
+                bool on = MinimapSymbols.Filled(kinds[k], x, y);
+                if (on) filled++;
+                symmetric &= on == MinimapSymbols.Filled(kinds[k], 4 - x, y)
+                    && on == MinimapSymbols.Filled(kinds[k], x, 4 - y);
+            }
+            Check(filled == counts[k], "기호 모양 픽셀 수 " + kinds[k]);
+            Check(symmetric, "기호 좌우/상하 대칭 " + kinds[k]);
+            Check(!MinimapSymbols.Filled(kinds[k], -1, 2) && !MinimapSymbols.Filled(kinds[k], 5, 2), "기호 밖 번짐 없음");
+        }
+        Check(MinimapSymbols.Filled(MinimapSymbols.Kind.Player, 2, 2)
+            && !MinimapSymbols.Filled(MinimapSymbols.Kind.Player, 0, 0), "플레이어는 중심이 채워지고 모서리가 둥근 원");
+        for (int y = 1; y < 4; y++)
+        for (int x = 1; x < 4; x++)
+            Check(!MinimapSymbols.Filled(MinimapSymbols.Kind.Stairs, x, y), "계단 내부는 전부 투명");
+        Check(MinimapSymbols.Filled(MinimapSymbols.Kind.Trap, 0, 0)
+            && MinimapSymbols.Filled(MinimapSymbols.Kind.Trap, 4, 0)
+            && !MinimapSymbols.Filled(MinimapSymbols.Kind.Trap, 2, 0), "함정은 대각선 X");
+    }
+    static void TestMinimapExploration()
+    {
+        Console.WriteLine("[미니맵 단계별 탐색]");
+        var cells = new HashSet<Vector2Int>();
+        var rooms = new[] { new RectInt(0, 0, 3, 3), new RectInt(8, 0, 3, 3), new RectInt(20, 20, 2, 2) };
+        foreach (RectInt room in rooms)
+            foreach (Vector2Int cell in room.allPositionsWithin) cells.Add(cell);
+        for (int x = 3; x <= 7; x++) cells.Add(new Vector2Int(x, 1));
+        cells.Add(new Vector2Int(4, 2));
+        cells.Add(new Vector2Int(4, 3));
+        var map = new MinimapExploration(cells, rooms);
+        Check(map.KnownCells.Count == 0, "층 생성 직후 탐색 기록 비어 있음");
+        map.Reveal(new Vector2Int(1, 1));
+        Check(map.KnownCells.Count == 10, "시작 방 9칸과 문만 공개");
+        foreach (Vector2Int cell in rooms[0].allPositionsWithin) Check(map.IsKnown(cell), "시작 방 전체 모양");
+        Check(!map.IsKnown(new Vector2Int(4, 1)) && !map.IsKnown(new Vector2Int(8, 1)), "시작 방 밖은 숨김");
+        Check(!map.Reveal(new Vector2Int(2, 1)), "방에 있을 때 바깥 통로 미리 공개하지 않음");
+        map.Reveal(new Vector2Int(3, 1));
+        Check(map.IsKnown(new Vector2Int(4, 1)) && !map.IsKnown(new Vector2Int(5, 1)), "통로 한 칸 거리까지만");
+        map.Reveal(new Vector2Int(4, 1));
+        Check(map.IsKnown(new Vector2Int(5, 1)) && map.IsKnown(new Vector2Int(4, 2)), "앞과 옆 통로를 함께 공개");
+        Check(!map.IsKnown(new Vector2Int(4, 3)), "주변 두 칸은 숨김");
+        Check(!map.Reveal(new Vector2Int(4, 1)), "같은 자리에서 반복 갱신 없음");
+        map.Reveal(new Vector2Int(6, 1));
+        map.Reveal(new Vector2Int(7, 1));
+        Check(!map.IsKnown(new Vector2Int(8, 1)) && !map.IsKnown(new Vector2Int(10, 2)), "입장 전 다른 방 공개 금지");
+        Check(map.Reveal(new Vector2Int(8, 1)), "방 안 진입 즉시 전체 공개");
+        foreach (Vector2Int cell in rooms[1].allPositionsWithin) Check(map.IsKnown(cell), "도착 방 전체 공개");
+        Check(map.IsKnown(new Vector2Int(0, 0)) && map.IsKnown(new Vector2Int(4, 2)), "기존 탐색 기록 유지");
+        var warp = new MinimapExploration(cells, rooms);
+        warp.Reveal(new Vector2Int(1, 1));
+        warp.Reveal(new Vector2Int(20, 20));
+        Check(warp.IsKnown(new Vector2Int(21, 21)) && !warp.IsKnown(new Vector2Int(5, 1)), "워프 도착 방만 공개");
+        Check(new MinimapExploration(cells, rooms).KnownCells.Count == 0, "새 층 탐색 기록 초기화");
+
+        var open = new List<Vector2Int>();
+        for (int y = -2; y <= 2; y++)
+        for (int x = -2; x <= 2; x++) open.Add(new Vector2Int(x, y));
+        var around = new MinimapExploration(open, Array.Empty<RectInt>());
+        around.Reveal(Vector2Int.zero);
+        Check(around.KnownCells.Count == 9, "현재 칸과 주변 8칸을 한 번에 공개");
+        foreach (var cell in open)
+            Check(around.IsKnown(cell) == (Math.Abs(cell.x) <= 1 && Math.Abs(cell.y) <= 1),
+                "주변 8방향/거리 1 범위 " + cell);
+        var corner = new MinimapExploration(new[] { Vector2Int.zero, Vector2Int.one }, Array.Empty<RectInt>());
+        corner.Reveal(Vector2Int.zero);
+        Check(!corner.IsKnown(Vector2Int.one), "대각선 벽 모서리 너머는 숨김");
+        var negative = new MinimapExploration(new[] { new Vector2Int(-2, -1), new Vector2Int(-1, -1), Vector2Int.zero }, Array.Empty<RectInt>());
+        negative.Reveal(new Vector2Int(-2, -1));
+        Check(negative.KnownCells.Count == 2 && !negative.IsKnown(Vector2Int.zero), "음수 좌표에서도 한 칸 거리");
+    }
+    static void TestMinimapFrontiers()
+    {
+        Console.WriteLine("[미니맵 실제 벽과 미탐색 경계]");
+        foreach (var direction in new[] { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right })
+        {
+            var terrain = new HashSet<Vector2Int> { Vector2Int.zero, direction };
+            var frontier = MinimapContours.Build(new[] { Vector2Int.zero }, terrain.Contains);
+            Check(frontier.Count == 3, "열린 미탐색 끝만 생략, 나머지 세 벽 유지 " + direction);
+            Check(MinimapContours.Build(terrain, terrain.Contains).Count == 4, "실제 막다른 끝은 유지 " + direction);
+        }
+        bool correct = true;
+        for (int terrainMask = 0; terrainMask < 16; terrainMask++)
+        for (int knownMask = 0; knownMask < 16; knownMask++)
+        {
+            if ((knownMask & ~terrainMask) != 0) continue;
+            var terrain = new HashSet<Vector2Int>();
+            var known = new HashSet<Vector2Int>();
+            for (int i = 0; i < 4; i++)
+            {
+                var cell = new Vector2Int(i % 2, i / 2);
+                if ((terrainMask & (1 << i)) != 0) terrain.Add(cell);
+                if ((knownMask & (1 << i)) != 0) known.Add(cell);
+            }
+            var actual = new HashSet<(bool horizontal, int x, int y)>();
+            foreach (var line in MinimapContours.Build(known, terrain.Contains))
+            {
+                bool horizontal = line.Start.y == line.End.y;
+                int length = horizontal ? line.End.x - line.Start.x : line.End.y - line.Start.y;
+                for (int i = 0; i < length; i++)
+                    actual.Add((horizontal, line.Start.x + (horizontal ? i : 0), line.Start.y + (horizontal ? 0 : i)));
+            }
+            var expected = new HashSet<(bool horizontal, int x, int y)>();
+            for (int y = 0; y <= 2; y++)
+            for (int x = 0; x <= 2; x++)
+            {
+                var above = new Vector2Int(x, y);
+                var below = new Vector2Int(x, y - 1);
+                var left = new Vector2Int(x - 1, y);
+                if ((known.Contains(above) && !terrain.Contains(below)) ||
+                    (known.Contains(below) && !terrain.Contains(above))) expected.Add((true, x, y));
+                if ((known.Contains(above) && !terrain.Contains(left)) ||
+                    (known.Contains(left) && !terrain.Contains(above))) expected.Add((false, x, y));
+            }
+            correct &= actual.SetEquals(expected);
+        }
+        Check(correct, "2x2의 지형/탐색 81조합: 알려진 칸에 맞닿은 실제 벽만 그림");
+    }
+
+    static void TestMinimapEnemyVision()
+    {
+        Console.WriteLine("[미니맵 적의 현재 시야]");
+        var rooms = new[] { new RectInt(0, 0, 3, 3), new RectInt(8, 0, 3, 3) };
+        var cells = new HashSet<Vector2Int>();
+        foreach (var room in rooms)
+            foreach (var cell in room.allPositionsWithin) cells.Add(cell);
+        for (int x = 3; x <= 7; x++) cells.Add(new Vector2Int(x, 1));
+        var map = new MinimapExploration(cells, rooms);
+        map.Reveal(new Vector2Int(1, 1));
+        map.Reveal(new Vector2Int(8, 1));
+        Check(map.CanSeeEnemy(Vector2Int.zero, new Vector2Int(2, 2)), "같은 방의 먼 적도 표시");
+        Check(!map.CanSeeEnemy(new Vector2Int(1, 1), new Vector2Int(8, 1)), "탐색한 다른 방의 적은 숨김");
+        var player = new Vector2Int(4, 1);
+        Check(map.CanSeeEnemy(player, new Vector2Int(5, 1)) && map.CanSeeEnemy(player, new Vector2Int(3, 1)),
+            "앞과 뒤의 인접 적 모두 표시");
+        Check(!map.CanSeeEnemy(player, new Vector2Int(6, 1)), "통로 두 칸 거리의 적은 숨김");
+        Check(!map.CanSeeEnemy(new Vector2Int(3, 1), new Vector2Int(0, 2)), "방을 나가면 그 방의 먼 적 숨김");
+        Check(map.CanSeeEnemy(new Vector2Int(7, 1), new Vector2Int(8, 1)), "아직 안 들어간 방도 인접 적은 표시");
+        var open = new List<Vector2Int>();
+        for (int y = -2; y <= 2; y++)
+        for (int x = -2; x <= 2; x++) open.Add(new Vector2Int(x, y));
+        var around = new MinimapExploration(open, Array.Empty<RectInt>());
+        foreach (var cell in open)
+        {
+            if (cell == Vector2Int.zero) continue;
+            Check(around.CanSeeEnemy(Vector2Int.zero, cell) == (Math.Abs(cell.x) <= 1 && Math.Abs(cell.y) <= 1),
+                "적 아이콘도 8방향 한 칸 거리 " + cell);
+        }
+        around.Reveal(Vector2Int.zero);
+        around.Reveal(new Vector2Int(2, 0));
+        Check(around.IsKnown(new Vector2Int(-1, 0)) && !around.CanSeeEnemy(new Vector2Int(2, 0), new Vector2Int(-1, 0)),
+            "탐색 기억이 남아도 멀어진 적 아이콘은 숨김");
+        var blocked = new MinimapExploration(new[] { Vector2Int.zero, Vector2Int.one }, Array.Empty<RectInt>());
+        Check(!blocked.CanSeeEnemy(Vector2Int.zero, Vector2Int.one), "대각선 벽 너머 적 숨김");
+    }
     static void Main()
     {
+        TestCameraFollow();
+        TestMinimapContours();
+        TestMinimapSymbols();
+        TestMinimapExploration();
+        TestMinimapFrontiers();
+        TestMinimapEnemyVision();
         TestDoorPlacement();
         TestLPathContiguity();
         TestRoomGraph();
+        TestDungeonRoutes();
+        TestCorridorVariety();
+        TestEntranceWidthRules();
         TestAutoRunner();
         TestDirectionLatch();
         TestDiagonalGrace();
         TestButtonPress();
         TestInputFocus();
         TestChaseMap();
+        TestCellsAndSharedRoutes();
+        TestEnemyPlan();
+        TestEnemyCuriosity();
+        TestEnemySleep();
+        TestEnemyDrops();
+        TestShops();
+        TestShopConfirmation();
+        TestMonsterHouse();
+        TestMonsterHouseAlarmAndMotion();
+        TestMergedSpecialRooms();
         TestRangedShot();
         TestResetRun();
+        TestRunState();
         TestPanelLayout();
         TestAimTargeting();
         TestLongPress();
@@ -52,6 +317,7 @@ static class Program
         TestRunScore();
         TestItemOrder();
         TestWeightedPick();
+        TestEnemyBudget();
         TestItemEnhancement();
         TestSheetIndex();
         TestExtensionPoints();
@@ -72,7 +338,7 @@ static class Program
     {
         Console.WriteLine("[문 배치]");
         var carver = typeof(CorridorCarver);
-        var open = carver.GetMethod("OpenDoorToward", BindingFlags.NonPublic | BindingFlags.Static);
+        var open = carver.GetMethod("VariedDoor", BindingFlags.NonPublic | BindingFlags.Static);
 
         int cases = 0;
         var rnd = new System.Random(1);
@@ -81,7 +347,7 @@ static class Program
             var a = new RoomInfo(rnd.Next(1, 30), rnd.Next(1, 30), rnd.Next(5, 11), rnd.Next(5, 11));
             var b = new RoomInfo(rnd.Next(1, 40), rnd.Next(1, 40), rnd.Next(5, 11), rnd.Next(5, 11));
 
-            var door = (Door)open.Invoke(null, new object[] { a, b });
+            var door = (Door)open.Invoke(null, new object[] { a, b, rnd, 100, 100 });
             cases++;
 
             bool onVerticalWall = (door.Position.x == a.Bounds.xMin || door.Position.x == a.Bounds.xMax)
@@ -101,11 +367,11 @@ static class Program
             Check((door.Outside - door.Position).sqrMagnitude == 1, "문 바깥 칸이 인접하지 않음");
         }
 
-        // 같은 방향으로 두 번 요청하면 같은 문을 재사용해야 한다
+        // 같은 위치가 다시 뽑히면 문을 중복 등록하지 않아야 한다
         var r1 = new RoomInfo(5, 5, 7, 7);
         var r2 = new RoomInfo(25, 5, 7, 7);
-        open.Invoke(null, new object[] { r1, r2 });
-        open.Invoke(null, new object[] { r1, r2 });
+        open.Invoke(null, new object[] { r1, r2, new System.Random(7), 100, 100 });
+        open.Invoke(null, new object[] { r1, r2, new System.Random(7), 100, 100 });
         Check(r1.Doors.Count == 1, $"문이 중복 생성됨 ({r1.Doors.Count}개)");
 
         Console.WriteLine($"  {cases} 케이스 검사 완료");
@@ -2706,6 +2972,77 @@ static class Program
         Console.WriteLine("  모든 자리가 뽑히는가 · 경계값 · 가중치 0 · 빈 목록 검사 완료");
     }
 
+    // ── 적을 몇 마리 놓는가 ─────────────────────────────────────────────────
+    //
+    // 예전에는 방당 적이 네 층마다 하나씩 <b>끝없이</b> 늘었다. 방 수는 18에서
+    // 멈추는데(RoomLayoutBuilder.MaxRooms) 적은 안 멈춰서, 100층이면 한 층에
+    // 450마리가 넘었다. 에러는 나지 않고 그냥 클리어가 불가능해질 뿐이라
+    // 눈으로는 "원래 어려운가 보다" 로 넘어간다. 그래서 숫자로 못 박아 둔다.
+    static void TestEnemyBudget()
+    {
+        Console.WriteLine("[적 수 상한]");
+
+        // 1) 층이 깊어지면 늘긴 하되 <b>상한에서 멈춘다.</b> 이것이 핵심이다.
+        Check(EnemyBudget.ExtraForStage(1) == 0, "1층에서 벌써 늘어남");
+        Check(EnemyBudget.ExtraForStage(EnemyBudget.StagesPerExtra) == 1, "열 층에서 하나 안 늘어남");
+        Check(EnemyBudget.ExtraForStage(EnemyBudget.StagesPerExtra * 2) == 2, "스무 층에서 둘 안 늘어남");
+
+        foreach (int deep in new[] { 30, 50, 99, 100, 500 })
+        {
+            Check(EnemyBudget.ExtraForStage(deep) == EnemyBudget.MaxExtraPerRoom,
+                  $"{deep}층에서 상한을 넘음: {EnemyBudget.ExtraForStage(deep)}");
+        }
+
+        // 2) 0층·음수에서도 늘지 않는다.
+        Check(EnemyBudget.ExtraForStage(0) == 0, "0층에서 늘어남");
+        Check(EnemyBudget.ExtraForStage(-5) == 0, "음수 층에서 늘어남");
+
+        // 3) 방당 수 = 기본 + 더해지는 몫.
+        Check(EnemyBudget.ForRoom(1, 100) == 1 + EnemyBudget.MaxExtraPerRoom, "방당 수가 어긋남");
+        Check(EnemyBudget.ForRoom(0, 1) == 0, "1층 빈 방에 적이 생김");
+
+        // 4) <b>층 전체 상한.</b> 방 18개를 차례로 채워도 넘지 않는다.
+        int total = 0;
+        for (int room = 0; room < 18; room++)
+        {
+            int wanted = EnemyBudget.ForRoom(1, 100);
+            total += EnemyBudget.AllowedThisFloor(wanted, total);
+        }
+        Check(total == EnemyBudget.MaxPerFloor, $"층 상한이 안 지켜짐: {total}");
+
+        // 5) 상한을 넘어선 뒤에는 한 마리도 안 준다.
+        Check(EnemyBudget.AllowedThisFloor(5, EnemyBudget.MaxPerFloor) == 0, "상한을 넘겨서 더 줌");
+        Check(EnemyBudget.AllowedThisFloor(5, EnemyBudget.MaxPerFloor + 99) == 0, "한참 넘겼는데 더 줌");
+
+        // 6) 상한에 걸리기 전에는 원하는 만큼 그대로 준다.
+        Check(EnemyBudget.AllowedThisFloor(3, 0) == 3, "상한 전인데 깎임");
+
+        // 7) 몬스터 하우스도 상한이 있다. <b>여기가 없으면 한 방에 백 마리가 몰린다.</b>
+        foreach (int deep in new[] { 20, 50, 100 })
+        {
+            Check(EnemyBudget.ForMonsterHouse(1, deep) <= EnemyBudget.MaxInMonsterHouse,
+                  $"{deep}층 몬스터 하우스가 상한을 넘음: {EnemyBudget.ForMonsterHouse(1, deep)}");
+        }
+
+        // 8) 기본이 0 이어도 하우스는 비어 있지 않다. 인스펙터의 방당 최소가 0 이라
+        //    (실제로 0 이다) 그대로 두면 텅 빈 몬스터 하우스가 나온다.
+        Check(EnemyBudget.ForMonsterHouse(0, 1) > 0, "몬스터 하우스가 텅 빔");
+
+        // 9) 하우스는 일반 방보다 확실히 많아야 뜻이 있다.
+        Check(EnemyBudget.ForMonsterHouse(1, 50) > EnemyBudget.ForRoom(1, 50),
+              "몬스터 하우스가 일반 방보다 많지 않음");
+
+        // 10) 예전 식보다 확실히 적어야 한다. 이번 변경의 요점이다.
+        //     예전: 방당 기본 + 층/4 라 100층이면 방당 26마리였다.
+        int oldPerRoom = 1 + 100 / 4;
+        Check(EnemyBudget.ForRoom(1, 100) * 4 < oldPerRoom,
+              $"100층 방당 수가 충분히 안 줄었다: {EnemyBudget.ForRoom(1, 100)} vs {oldPerRoom}");
+
+        Console.WriteLine(
+            $"  방당 상한 {EnemyBudget.MaxExtraPerRoom} · 층 {EnemyBudget.MaxPerFloor} · " +
+            $"몬하 {EnemyBudget.MaxInMonsterHouse} 검사 완료");
+    }
+
     // ── 강화 수치 — 무엇에 붙고, 얼마나 붙고, 어떻게 보이는가 ────────────────
     static void TestItemEnhancement()
     {
@@ -3582,6 +3919,8 @@ static class Program
               "대각선이 막혔을 때 나눠 시도하지 않음");
 
         // 같은 칸이면 갈 곳이 없다.
+        Check(new List<Vector2>(MoveIntent.Toward(Vector2.zero)).Count == 0,
+            "목표가 없는 순찰이 제자리 이동을 생성함");
         Check(new List<Vector2>(MoveIntent.Toward(from, from)).Count == 0, "제자리인데 방향이 나옴");
 
         // 도망은 반대쪽부터. 등 뒤가 막혔을 때 옆으로 샐 길도 함께 나온다.
@@ -3630,6 +3969,22 @@ static class Program
         Check(!PatrolPlan.TryPickTarget(
                   new Vector2(5, 5), rooms, new List<Vector3>(), seen, 0.5f, out _),
               "문이 없는데 목표를 고름");
+
+        // 막힌 출구는 방문 기억이 초기화되어도 다시 고르면 안 된다.
+        var blockedDoors = new HashSet<Vector2> { new Vector2(5, 10) };
+        var alternatives = new List<Vector3>(exits) { new Vector3(-1, 5, 0) };
+        for (int roll = 0; roll <= 10; roll++)
+        {
+            var allSeen = new List<Vector2> { new Vector2(5, 10), new Vector2(-1, 5) };
+            Check(PatrolPlan.TryPickTarget(new Vector2(5, 5), rooms, alternatives,
+                allSeen, roll / 10f, out var other, blockedDoors) && other == new Vector3(-1, 5, 0),
+                "순찰 정체 시 막힌 출구를 다시 선택하거나 다른 방의 출구를 선택함");
+        }
+        blockedDoors.Add(new Vector2(-1, 5));
+        Check(!PatrolPlan.TryPickTarget(new Vector2(5, 5), rooms, alternatives,
+            seen, 0f, out _, blockedDoors), "모든 출구가 막혔는데 목표 선택을 반복함");
+        Check(!PatrolPlan.TryPickTarget(new Vector2(5, 5), rooms, exits,
+            seen, 0f, out _, blockedDoors), "외길 방에서 막힌 출구를 다시 고름");
 
         // 12) 사방이 막혔으면 제자리.
         Check(PartnerPlan.DecideNeutral(wanderer, _ => false, 0.5f).Action == PartnerAction.Stay,
@@ -3695,6 +4050,536 @@ static class Program
             if (!moved) return -1;                               // 갈 곳이 없다
         }
         return -1;
+    }
+
+    static void TestMonsterHouseAlarmAndMotion()
+    {
+        Console.WriteLine("[하우스 가속 낙하 · 전체 기상 · 집결]");
+        Check(MonsterHouseDropMotion.HeightAt(0f) == 6f, "하우스 낙하 시작 높이 불일치");
+        Check(MonsterHouseDropMotion.HeightAt(-1f) == 6f, "낙하 음수 시간에서 높이 초과");
+        Check(MonsterHouseDropMotion.HeightAt(MonsterHouseDropMotion.FallSeconds) == 0f &&
+            MonsterHouseDropMotion.HeightAt(1f) == 0f, "착지 위치를 지나쳐 내려감");
+        float previous = MonsterHouseDropMotion.Height;
+        for (int n = 1; n <= 20; n++)
+        {
+            float height = MonsterHouseDropMotion.HeightAt(MonsterHouseDropMotion.FallSeconds * n / 20f);
+            Check(height <= previous && height >= 0f, "낙하 도중 상승하거나 지면 통과");
+            previous = height;
+        }
+        float quarter = MonsterHouseDropMotion.FallSeconds / 4;
+        Check(MonsterHouseDropMotion.HeightAt(quarter * 3) >
+            MonsterHouseDropMotion.Height - MonsterHouseDropMotion.HeightAt(quarter),
+            "낙하 후반 속도가 빨라지지 않음");
+        Vector2 impact = MonsterHouseDropMotion.LandingScale(0f);
+        Check(impact.x > 1f && impact.y < 1f, "착지 순간 압축이 없음");
+        Check(MonsterHouseDropMotion.LandingScale(MonsterHouseDropMotion.LandingSeconds) == Vector2.one &&
+            MonsterHouseDropMotion.BounceAt(MonsterHouseDropMotion.LandingSeconds) == 0f,
+            "착지 후 크기와 위치가 원상복구되지 않음");
+        Check(MonsterHouseDropMotion.BounceAt(MonsterHouseDropMotion.LandingSeconds / 2) > 0f,
+            "착지 반동이 없음");
+        var sleeper = new EnemySleep();
+        foreach (float type in new[] { 0f, 1f })
+        {
+            sleeper.OnSpawn(0f, type);
+            Check(sleeper.IsSleeping, "경보 테스트 전 수면 전제 불일치");
+            sleeper.Wake();
+            Check(!sleeper.IsSleeping, "하우스 경보가 깊은 수면을 깨우지 못함");
+        }
+        var grid = new AsciiGrid(new[]
+        {
+            "###########",
+            "#.........#",
+            "#.#######.#",
+            "#.#     #.#",
+            "#E#######P#",
+            "###########",
+        });
+        var destination = grid.Find('P');
+        var alarm = new MonsterHouseRally(new RectInt(destination.x, destination.y, 1, 1), grid);
+        var at = grid.Find('E');
+        Check(!alarm.HasArrived(at), "집결 전 방에 도착한 것으로 판단함");
+        int turns = 0;
+        while (!alarm.HasArrived(at) && turns < 100)
+        {
+            var choices = new List<Vector2>(alarm.StepsToward(GridUtil.CellCenter(at)));
+            if (choices.Count == 0) break;
+            at += new Vector3Int((int)choices[0].x, (int)choices[0].y, 0);
+            turns++;
+        }
+        Check(alarm.HasArrived(at) && at == destination && turns > 8,
+            "멀리 떨어진 적이 벽을 돌아 하우스까지 집결하지 못함");
+        Check(!alarm.HasArrived(destination + Vector3Int.right), "방 밖을 집결 완료로 판단함");
+        var unrelatedPlayerMap = new ChaseMap();
+        unrelatedPlayerMap.Rebuild(grid, GridUtil.CellCenter(grid.Find('E')));
+        Check(alarm.TryGetDistance(GridUtil.CellCenter(destination), out int distance) && distance == 0,
+            "플레이어가 이동하자 집결 목표 방이 바뀜");
+    }
+
+    static void TestMergedSpecialRooms()
+    {
+        Console.WriteLine("[보물방 · 몬스터 하우스 통합]");
+        foreach (int stage in new[] { 1, 5, 18, 100 })
+        for (int candidate = 0; candidate < 8; candidate++)
+        foreach (float roll in new[] { 0f, 0.2f, 0.5f, 1f })
+        {
+            var layout = new DungeonLayout();
+            for (int n = 0; n < 8; n++) layout.Rooms.Add(new RoomInfo(n * 10, 0, 6, 6));
+            RoomLayoutBuilder.AssignSpecialRooms(layout, stage, roll, candidate);
+            int houses = 0;
+            foreach (var room in layout.Rooms)
+            {
+                Check(room.Kind != RoomKind.Treasure, "적 없는 보물방이 별도로 생성됨");
+                if (room.Kind == RoomKind.MonsterHouse) houses++;
+            }
+
+            Check(houses == (roll < RoomLayoutBuilder.MonsterHouseChance(stage) ? 1 : 0),
+                "통합 특수방의 생성 수가 확률과 다름");
+            if (houses == 1) Check(layout.Rooms[candidate].Kind == RoomKind.MonsterHouse,
+                "후보로 고른 방에 하우스가 지정되지 않음");
+        }
+        Check(Math.Abs(RoomLayoutBuilder.MonsterHouseChance(1) - 0.3303f) < 0.0001f,
+            "1층 통합 확률이 이전 특수방 합산 확률과 다름");
+        var entries = new List<MonsterHouseStageChance>
+        {
+            new MonsterHouseStageChance { fromStage = 5, chance = 0.4f },
+            new MonsterHouseStageChance { fromStage = 1, chance = 0.2f },
+            new MonsterHouseStageChance { fromStage = 10, chance = 0.1f },
+            new MonsterHouseStageChance { fromStage = 0, chance = 0.9f },
+        };
+        Check(MonsterHouseSpawnSettings.ResolveChance(0, 0.3f, entries) == 0.3f,
+            "설정 이전 층의 기본 확률 불일치");
+        Check(MonsterHouseSpawnSettings.ResolveChance(1, 0f, entries) == 0.2f &&
+            MonsterHouseSpawnSettings.ResolveChance(4, 0f, entries) == 0.2f &&
+            MonsterHouseSpawnSettings.ResolveChance(5, 0f, entries) == 0.4f &&
+            MonsterHouseSpawnSettings.ResolveChance(9, 0f, entries) == 0.4f &&
+            MonsterHouseSpawnSettings.ResolveChance(10, 0f, entries) == 0.1f &&
+            MonsterHouseSpawnSettings.ResolveChance(100, 0f, entries) == 0.1f,
+            "층별 확률 구간 또는 비정렬 항목 처리 불일치");
+        entries.Add(new MonsterHouseStageChance { fromStage = 5, chance = 0.6f });
+        Check(MonsterHouseSpawnSettings.ResolveChance(5, 0f, entries) == 0.6f,
+            "같은 층의 뒤 항목이 우선하지 않음");
+        Check(MonsterHouseSpawnSettings.ResolveChance(1, -1f, null) == 0f &&
+            MonsterHouseSpawnSettings.ResolveChance(1, 2f, null) == 1f,
+            "범위 밖 확률 보정 실패");
+        foreach (float chance in new[] { 0f, 1f })
+        foreach (float roll in new[] { 0f, 1f })
+        {
+            var controlled = new DungeonLayout();
+            for (int n = 0; n < 3; n++) controlled.Rooms.Add(new RoomInfo(n * 8, 0, 5, 5));
+            RoomLayoutBuilder.AssignSpecialRooms(controlled, 1, roll, 0, chance);
+            Check(controlled.Rooms[0].Kind == (chance == 1f ? RoomKind.MonsterHouse : RoomKind.Normal),
+                "층별 확률 0/100% 또는 첫 방 하우스 지정 불일치");
+        }
+        var tiny = new DungeonLayout();
+        tiny.Rooms.Add(new RoomInfo(0, 0, 6, 6));
+        tiny.Rooms.Add(new RoomInfo(10, 0, 6, 6));
+        RoomLayoutBuilder.AssignSpecialRooms(tiny, 1, 0f, 0);
+        Check(tiny.Rooms[1].Kind == RoomKind.Normal, "두 방짜리 맵에 특수방이 생성됨");
+    }
+
+    static void TestMonsterHouse()
+    {
+        Console.WriteLine("[몬스터 하우스 입장 · 착지]");
+        var room = new RectInt(-4, 2, 5, 4);
+        var house = new MonsterHousePlan(room);
+        Check(!house.TryEnter(new Vector3Int(-5, 3, 0)) && !house.Triggered,
+            "방 바깥이나 입구에서 하우스가 발동함");
+        Check(!house.TryEnter(new Vector3Int(1, 3, 0)), "방의 xMax 경계를 내부로 판정함");
+        Check(!house.TryEnter(new Vector3Int(-3, 6, 0)), "방의 yMax 경계를 내부로 판정함");
+        Check(house.TryEnter(new Vector3Int(-4, 2, 0)) && house.Triggered, "내부 진입 시 하우스 미발동");
+        Check(!house.TryEnter(new Vector3Int(-3, 3, 0)), "같은 방에서 하우스 재발동");
+        Check(!house.TryEnter(new Vector3Int(-5, 3, 0)) &&
+            !house.TryEnter(new Vector3Int(-4, 2, 0)), "퇴장 후 재진입으로 하우스 재발동");
+        var otherFloor = new MonsterHousePlan(room);
+        Check(otherFloor.TryEnter(new Vector3Int(0, 5, 0)), "새 층 하우스에 이전 층 발동 이력이 남음");
+        Check(MessageCatalog.Format(GameMessage.MonsterHouse) == "몬스터 하우스다!", "하우스 메시지 불일치");
+        var occupied = new HashSet<Vector3Int>();
+        var preferred = new Vector3Int(-2, 4, 0);
+        Check(house.TryLanding(preferred, occupied, _ => true, out var first) && first == preferred,
+            "비어 있는 예정 위치를 사용하지 않음");
+        occupied.Add(preferred); // 플레이어·동료·기존 적 또는 계단
+        var wall = new Vector3Int(-4, 2, 0);
+        Check(house.TryLanding(preferred, occupied, cell => cell != wall, out var alternate) &&
+            alternate != preferred && alternate != wall && room.Contains(new Vector2Int(alternate.x, alternate.y)),
+            "착지 위치가 생물·계단·벽과 겹치거나 방 밖임");
+        occupied.Add(alternate);
+        int spawned = 0;
+        while (house.TryLanding(preferred, occupied, cell => cell != wall, out var landing))
+        {
+            Check(occupied.Add(landing), "순차 등장하는 적끼리 착지 칸 중복");
+            if (++spawned > room.width * room.height) break;
+        }
+        Check(spawned == room.width * room.height - 3, "방의 남은 빈칸 개수와 등장 수 불일치");
+        Check(!house.TryLanding(preferred, occupied, cell => cell != wall, out _), "빈칸 없이도 적을 배치함");
+        Check(!house.TryLanding(preferred, new HashSet<Vector3Int>(), _ => false, out _), "바닥 없는 방에 착지함");
+    }
+
+    static void TestShopConfirmation()
+    {
+        Console.WriteLine("[상점 대화 결정 입력 분리]");
+        var confirm=new ConfirmationPress();
+        Check(!confirm.Accept(true,true), "대화를 시작한 A로 즉시 거래 확정");
+        for(int n=0;n<20;n++) Check(!confirm.Accept(true,false), "A를 누른 채로 거래가 확정됨");
+        Check(!confirm.Accept(false,false), "A를 떼는 순간 거래 확정");
+        Check(confirm.Accept(true,true), "새로 누른 A로 거래를 확정하지 못함");
+        var next=new ConfirmationPress();
+        Check(!next.Accept(true,true), "다음 거래가 이전 결정 입력을 재사용함");
+        Check(!next.Accept(false,true), "해제 관찰 전 Pressed만으로 확정함");
+        Check(!next.Accept(false,false) && !next.Accept(true,false) && next.Accept(true,true),
+            "결정 입력의 해제/새 눌림 구분 실패");
+        string quote=MessageCatalog.Format(GameMessage.ShopSellPrompt,"사과",50);
+        Check(quote.Contains("사과") && quote.Contains("50G") && quote.Contains("판매하시겠습니까"),
+            "판매 질문에 아이템명/매입가/판매 확인 누락");
+    }
+
+    static void TestShops()
+    {
+        Console.WriteLine("[상점 조건 · 중앙 진열 · 거래 장부]");
+        RoomInfo Make(int width,int height,int doors)
+        {
+            var room=new RoomInfo(-5,3,width,height);
+            for(int n=0;n<doors;n++) room.Doors.Add(new Door(new Vector3Int(-5,5+n,0),new Vector3Int(-6,5+n,0)));
+            return room;
+        }
+        Check(ShopPlan.Eligible(Make(6,6,1)), "정사각형 외길 방이 상점 후보에서 제외됨");
+        Check(!ShopPlan.Eligible(Make(6,7,1)) && !ShopPlan.Eligible(Make(6,6,0)) &&
+            !ShopPlan.Eligible(Make(6,6,2)), "직사각형/통로 0개/통로 여러 개 방을 상점으로 허용함");
+        var special=Make(6,6,1); special.Kind=RoomKind.MonsterHouse;
+        Check(!ShopPlan.Eligible(special), "몬스터 하우스를 상점으로 덮어씀");
+        var layout=new DungeonLayout(); layout.Rooms.Add(Make(6,7,1)); layout.Rooms.Add(Make(6,6,1)); layout.Rooms.Add(Make(7,7,1));
+        Check(!ShopPlan.Assign(layout,0f,0,0f), "상점 0% 설정 무시");
+        Check(ShopPlan.Assign(layout,1f,0,1f) && layout.Rooms[1].Kind==RoomKind.Shop, "조건에 맞는 상점 지정 실패");
+        Check(!ShopPlan.Assign(layout,0f,0,1f) && layout.Rooms[2].Kind==RoomKind.Normal, "한 층에 두 번째 상점 생성");
+        int lastCount=0;
+        for(int side=4;side<=10;side++)
+        {
+            var room=new RectInt(-3,2,side,side); var cells=ShopPlan.DisplayCells(room);
+            Check(cells.Count>=4 && cells.Count>=lastCount, "상점 크기에 따라 재고가 증가하지 않음"); lastCount=cells.Count;
+            var unique=new HashSet<Vector3Int>(cells); Check(unique.Count==cells.Count, "상품 진열 칸 중복");
+            foreach(var cell in cells) Check(room.Contains(new Vector2Int(cell.x,cell.y)) &&
+                cell.x>room.xMin && cell.x<room.xMax-1 && cell.y>room.yMin && cell.y<room.yMax-1,
+                "진열로 방 가장자리 통행로를 막음");
+            int minX=int.MaxValue,maxX=int.MinValue,minY=int.MaxValue,maxY=int.MinValue;
+            for(int n=0;n<4;n++) { minX=Math.Min(minX,cells[n].x); maxX=Math.Max(maxX,cells[n].x); minY=Math.Min(minY,cells[n].y); maxY=Math.Max(maxY,cells[n].y); }
+            Check(maxX-minX==1 && maxY-minY==1, "첫 네 상품이 중앙 2x2가 아님");
+        }
+        var ledger=new ShopLedger(); ledger.Register(1,100); ledger.Register(2,101);
+        ledger.Take(999); Check(ledger.Debt==0, "상인 소유가 아닌 물건에 청구됨");
+        ledger.Take(1); ledger.Take(1); Check(ledger.Debt==100 && ledger.BlocksExit, "미결제 상품 중복 청구/출구 미차단");
+        Check(!ledger.Purchase(99,out _) && ledger.Owns(1) && ledger.Debt==100, "잔액 부족 거래로 소유권 이전");
+        Check(ledger.Purchase(100,out int paid) && paid==100 && !ledger.Owns(1) && ledger.Debt==0 && !ledger.BlocksExit,
+            "정상 결제 후 소유권/대금/출구 처리 불일치");
+        Check(!ledger.Purchase(100,out _), "같은 상품 이중 결제");
+        ledger.Take(2); ledger.Return(2); Check(ledger.Debt==0 && ledger.Owns(2), "반환 상품의 소유권이나 채무 불일치");
+        Check(!ledger.Leave(false), "구매 완료나 반환 후 나갔는데 절도 처리");
+        ledger.Take(2); Check(!ledger.Leave(true) && !ledger.Hostile, "방 안에서 소지 중인데 절도 처리");
+        Check(ledger.Leave(false) && ledger.Hostile, "상품 소지한 채 방 이탈 시 추적 전환 누락");
+        var ranged=new ShopLedger(); ranged.RangedHit(true); Check(!ranged.Hostile,"적의 원거리 공격으로 상인 적대화");
+        ranged.RangedHit(false); Check(ranged.Hostile,"플레이어/동료의 원거리 공격으로 상인 적대화 안 됨");
+        Check(ShopLedger.BuyOffer(101)==50 && ShopLedger.BuyOffer(100)==50 && ShopLedger.BuyOffer(-1)==0,
+            "매입 시세 절반 계산 오류");
+        var consumed=new ShopLedger(); consumed.Register(3,80); consumed.Take(3);
+        Check(consumed.Debt==80 && consumed.Purchase(80,out _), "소모한 상품의 대금이 사라짐");
+        consumed.Register(3,120); consumed.Take(3); Check(consumed.Debt==120, "구매한 물건을 재판매한 후 가격/소유권 갱신 실패");
+        var thrown=new ShopLedger(); thrown.Register(5,200); thrown.Use(5);
+        Check(thrown.WasUsed(5) && thrown.Debt==200 && thrown.BlocksExit && !thrown.Hostile,
+            "상점 밖 투척을 즉시 적대 처리하거나 사용 대금을 누락함");
+        thrown.Return(5);
+        Check(thrown.Debt==200, "사용 처리한 상품을 반납하여 대금이 사라짐");
+        Check(thrown.Purchase(200,out _) && !thrown.WasUsed(5) && !thrown.Owns(5),
+            "사용 상품의 정상 결제 실패");
+        var visit=new ShopVisit();
+        Check(visit.Observe(true,true), "첫 입장 환영 인사 누락");
+        Check(!visit.Observe(true,true) && !visit.Observe(true,true), "방 안에 머무는데 환영 인사 반복");
+        Check(!visit.Observe(false,true) && visit.Observe(true,true), "재입장 환영 인사 누락");
+        var hostileVisit=new ShopVisit();
+        Check(!hostileVisit.Observe(true,false), "적대 상인이 환영 인사를 함");
+        Check(new ShopVisit().Observe(true,true), "상점에서 층을 시작할 때 환영 인사 누락");
+        var overflow=new ShopLedger(); overflow.Register(1,int.MaxValue); overflow.Register(2,int.MaxValue); overflow.Take(1); overflow.Take(2);
+        Check(!overflow.Purchase(int.MaxValue,out _), "대금 합계 초과로 부당한 할인/음수 결제 발생");
+    }
+
+    static void TestEnemyDrops()
+    {
+        Console.WriteLine("[몬스터 처치 드롭 확률 · 중복 방지]");
+        foreach (var rate in new[] { ItemDropRate.High, ItemDropRate.Medium, ItemDropRate.Low })
+        {
+            float chance = EnemyDropPlan.Chance(rate);
+            int count = 0;
+            for (int n = 0; n < 10000; n++)
+            {
+                var plan = new EnemyDropPlan();
+                Check(!plan.TryResolveDeath(1, rate, 0f, out bool aliveDrop) && !aliveDrop,
+                    "살아 있는 적에게 드롭 발생");
+                Check(plan.TryResolveDeath(0, rate, (n + 0.5f) / 10000, out bool drop), "죽음 처리 누락");
+                if (drop) count++;
+                Check(!plan.TryResolveDeath(-1, rate, 0f, out bool duplicate) && !duplicate,
+                    "추가 타격/피해 처리로 경험치·드롭 중복 발생");
+            }
+            int expected = rate == ItemDropRate.High ? 3000 : rate == ItemDropRate.Medium ? 1500 : 500;
+            Check(count == expected, "드롭 등급별 실제 추첨 비율 불일치");
+            var boundary = new EnemyDropPlan();
+            Check(boundary.TryResolveDeath(-3, rate, chance, out bool atBoundary) && !atBoundary,
+                "드롭 확률 경계 불일치");
+            Check(!boundary.TryResolveDeath(0, rate, 0f, out _), "실패한 드롭을 다시 추첨함");
+        }
+        var first = new EnemyDropPlan();
+        var second = new EnemyDropPlan();
+        Check(first.TryResolveDeath(0, ItemDropRate.High, 0f, out bool a) && a &&
+            second.TryResolveDeath(0, ItemDropRate.High, 0f, out bool b) && b,
+            "다른 적의 드롭 상태가 공유됨");
+        var origin = new Vector3(-2.5f, 3.5f, 0f);
+        var occupied = new HashSet<Vector3> { origin };
+        Check(ItemThrower.TryFindFreeSpot(origin, occupied.Contains, out var shifted) && shifted != origin,
+            "드롭 위치가 기존 바닥 물건과 겹침");
+        Check(!ItemThrower.TryFindFreeSpot(origin, _ => true, out _), "발밑과 주변이 모두 찼는데 드롭함");
+    }
+
+    static void TestEnemySleep()
+    {
+        Console.WriteLine("[몬스터 초기 수면 · 근접 기상]");
+        var sleep = new EnemySleep();
+        Check(!sleep.IsSleeping, "기본 상태가 수면임");
+        sleep.OnSpawn(0f, 0f);
+        Check(sleep.IsSleeping && sleep.WakesOnProximity, "근접 기상형 생성 실패");
+        Check(!sleep.TryWakeNearby(3, 0f) && sleep.IsSleeping, "기상 거리 밖에서 깨어남");
+        Check(!sleep.TryWakeNearby(int.MaxValue, 0f), "도달 불가 거리에서 깨어남");
+        Check(!sleep.TryWakeNearby(-1, 0f), "잘못된 거리로 깨어남");
+        Check(!sleep.TryWakeNearby(2, EnemySleep.NearbyWakeChance) && sleep.IsSleeping,
+            "기상 확률 경계에서 깨어남");
+        Check(!sleep.TryWakeNearby(2, 1f) && sleep.IsSleeping, "기상 실패 후 수면이 풀림");
+        Check(sleep.TryWakeNearby(2, 0f) && !sleep.IsSleeping, "거리 경계 안에서 기상 실패");
+        Check(!sleep.TryWakeNearby(1, 0f), "기상한 적을 다시 깨움");
+        Check(!sleep.TryWakeOnDamage(1), "깨어 있는 적을 재기상 처리함");
+        sleep.OnSpawn(0f, 0f);
+        Check(sleep.TryWakeNearby(1, 0f), "인접 플레이어로 기상 실패");
+
+        sleep.OnSpawn(0f, EnemySleep.ProximitySleeperChance);
+        Check(sleep.IsSleeping && !sleep.WakesOnProximity, "깊은 수면형 생성 실패");
+        for (int turn = 0; turn < 100; turn++)
+            Check(!sleep.TryWakeNearby(turn % 3, 0f) && sleep.IsSleeping,
+                "깊은 수면형이 피해 없이 깨어남");
+        Check(!sleep.TryWakeOnDamage(0) && sleep.IsSleeping, "피해 없이 기상함");
+        Check(!sleep.TryWakeOnDamage(-5) && sleep.IsSleeping, "회복으로 기상함");
+        Check(sleep.TryWakeOnDamage(1) && !sleep.IsSleeping, "깊은 수면형이 피격 후 안 깨어남");
+        sleep.OnSpawn(0f, 0f);
+        Check(sleep.TryWakeOnDamage(1) && !sleep.IsSleeping, "근접 기상형이 피격 후 안 깨어남");
+        sleep.OnSpawn(EnemySleep.SpawnSleepChance, 0f);
+        Check(!sleep.IsSleeping && !sleep.WakesOnProximity, "생성 확률 경계에서 수면 생성");
+        sleep.OnSpawn(1f, 1f);
+        Check(!sleep.IsSleeping, "항상 수면으로 생성됨");
+
+        int sleepingCount = 0, proximityCount = 0;
+        for (int roll = 0; roll < 100; roll++)
+        for (int type = 0; type < 100; type++)
+        {
+            sleep.OnSpawn((roll + 0.5f) / 100, (type + 0.5f) / 100);
+            if (sleep.IsSleeping) sleepingCount++;
+            if (sleep.WakesOnProximity) proximityCount++;
+        }
+        Check(sleepingCount == 3000 && proximityCount == 1500,
+            "수면 30% · 그중 근접 기상형 50% 생성 비율 불일치");
+        int woke = 0;
+        for (int roll = 0; roll < 100; roll++)
+        {
+            sleep.OnSpawn(0f, 0f);
+            if (sleep.TryWakeNearby(2, (roll + 0.5f) / 100)) woke++;
+        }
+        Check(woke == 25, "근접 기상 25% 비율 불일치");
+    }
+
+    static void TestEnemyCuriosity()
+    {
+        Console.WriteLine("[적 호기심 / 원거리 피격 방향 조사]");
+        var self = new Vector3Int(-3, 2, 0);
+        for (int y = -1; y <= 1; y++)
+        for (int x = -1; x <= 1; x++)
+        {
+            if (x == 0 && y == 0) continue;
+            var state = new EnemyCuriosity();
+            var origin = self + new Vector3Int(x * 4, y * 4, 0);
+            Check(state.TryStart(true, 2, 8, self, origin), "순찰 중 원거리 피해에 반응하지 않음");
+            Check(state.Direction == new Vector2(x, y), "공격자가 아닌 투사체 진행 방향으로 향함");
+            var position = self;
+            int calls = 0;
+            // 발사 지점을 지나도 직진하고, 여섯 번째 칸이 막혀 있으면 멈춘다.
+            bool Move(Vector2 direction)
+            {
+                calls++;
+                var next = position + new Vector3Int((int)direction.x, (int)direction.y, 0);
+                if (MoveIntent.Distance(self, next) > 5) return false;
+                position = next;
+                return true;
+            }
+            for (int step = 0; step < 5; step++)
+                Check(state.TryStep(Move), "막히기 전에 직진을 중단함");
+            Check(position == self + new Vector3Int(x * 5, y * 5, 0), "진행 중 조사 방향이 바뀜");
+            Check(!state.TryStep(Move) && !state.Active, "막힌 뒤에도 호기심이 유지됨");
+            Check(calls == 6, "막힌 방향 외에 우회 이동을 시도함");
+            Check(!state.TryStep(Move) && calls == 6, "호기심 종료 후에도 이동함");
+        }
+        var curiosity = new EnemyCuriosity();
+        var source = self + new Vector3Int(4, 0, 0);
+        Check(!curiosity.TryStart(false, 2, 8, self, source), "추격 중 호기심이 시작됨");
+        Check(!curiosity.TryStart(true, 0, 8, self, source), "피해 없이 호기심이 시작됨");
+        Check(!curiosity.TryStart(true, 2, 0, self, source), "죽은 적이 호기심을 시작함");
+        Check(!curiosity.TryStart(true, 2, 8, self, self), "방향 없는 피격이 이동을 만듦");
+        curiosity.TryStart(true, 2, 8, self, source);
+        Check(!curiosity.TryStart(false, 2, 8, self, self + new Vector3Int(0, 4, 0)) &&
+            curiosity.Direction == Vector2.right, "조사 중 추가 피격으로 원래 방향이 바뀜");
+        curiosity.Stop();
+        Check(!curiosity.Active, "플레이어 발견 후 조사 상태를 끝내지 못함");
+        Check(curiosity.TryStart(true, 2, 8, self, source), "순찰 복귀 후 재조사를 시작하지 못함");
+        int blockedCalls = 0;
+        Check(!curiosity.TryStep(direction => { blockedCalls++; return false; }) &&
+            !curiosity.Active && blockedCalls == 1, "즉시 막힌 통로에서 조사 종료 실패");
+    }
+
+    // ── 자리는 칸으로 견주고, 순찰 지도는 목표마다 한 장을 나눠 쓰는가 ──────
+    // ── 적의 판단: 모드를 오가는 규칙과 때릴 상대 고르기 ──────────────────
+    static void TestEnemyPlan()
+    {
+        Console.WriteLine("[적 판단 — 모드 전환 · 상대 고르기]");
+
+        EnemySight Sight(EnemyMode current) => new EnemySight
+        {
+            Current = current,
+            ChaseMapReady = true,
+            StepsToPlayer = 5,
+            StraightDistance = 5f,
+        };
+
+        // 보이면 어느 모드에서든 추격으로. 확인하던 것은 그만둔다.
+        foreach (EnemyMode mode in new[] { EnemyMode.Patrol, EnemyMode.Curious, EnemyMode.Chase })
+        {
+            var seen = Sight(mode);
+            seen.PlayerVisible = true;
+            EnemyModeChange change = EnemyPlan.NextMode(seen);
+            Check(change.Mode == EnemyMode.Chase && change.StopCuriosity && !change.ResetPatrol,
+                $"{mode} 중 플레이어를 보고도 추격으로 넘어가지 않음");
+        }
+
+        // 안 보이면 순찰 · 확인은 그대로 남는다. 추격을 시작하는 길은 '보인다' 뿐이다.
+        Check(EnemyPlan.NextMode(Sight(EnemyMode.Patrol)).Mode == EnemyMode.Patrol,
+            "보이지 않는데 순찰이 다른 모드로 바뀜");
+        Check(EnemyPlan.NextMode(Sight(EnemyMode.Curious)).Mode == EnemyMode.Curious,
+            "보이지 않는데 확인을 그만둠 — 확인은 막힐 때까지 직진해야 한다");
+
+        // 추격은 안 보여도 이어 간다(통로에서 끊기지 않게). 걸음 수 한도까지.
+        var near = Sight(EnemyMode.Chase);
+        near.StepsToPlayer = EnemyPlan.ChaseGiveUpDistance;
+        Check(EnemyPlan.NextMode(near).Mode == EnemyMode.Chase, "한도 안인데 추격을 포기함");
+
+        var far = Sight(EnemyMode.Chase);
+        far.StepsToPlayer = EnemyPlan.ChaseGiveUpDistance + 1;
+        EnemyModeChange lost = EnemyPlan.NextMode(far);
+        Check(lost.Mode == EnemyMode.Patrol && lost.ResetPatrol, "한도를 넘었는데 추격을 이어 가거나 순찰을 새로 잡지 않음");
+
+        var walledOff = Sight(EnemyMode.Chase);
+        walledOff.StepsToPlayer = -1;
+        Check(EnemyPlan.NextMode(walledOff).Mode == EnemyMode.Patrol, "갈 수 없는 상대를 계속 쫓음");
+
+        // 벽 너머: 직선으로는 두 칸이지만 걸음으로는 멀다. 걸음 수로 재야 포기한다.
+        var behindWall = Sight(EnemyMode.Chase);
+        behindWall.StraightDistance = 2f;
+        behindWall.StepsToPlayer = 30;
+        Check(EnemyPlan.NextMode(behindWall).Mode == EnemyMode.Patrol,
+            "걸음 수가 아니라 직선 거리로 판단함 — 벽 너머 상대를 영영 못 놓는다");
+
+        // 지도가 없을 때만 직선 거리로 잰다.
+        var noMap = Sight(EnemyMode.Chase);
+        noMap.ChaseMapReady = false;
+        noMap.StepsToPlayer = -1;
+        noMap.StraightDistance = 3f;
+        Check(EnemyPlan.NextMode(noMap).Mode == EnemyMode.Chase, "지도가 없을 때 가까운 상대를 포기함");
+        noMap.StraightDistance = EnemyPlan.ChaseGiveUpDistance + 1;
+        Check(EnemyPlan.NextMode(noMap).Mode == EnemyMode.Patrol, "지도가 없을 때 먼 상대를 계속 쫓음");
+
+        // 집결: 덜 왔으면 플레이어가 보여도 집결이 먼저다.
+        var rallying = Sight(EnemyMode.Rally);
+        rallying.Rallying = true;
+        rallying.PlayerVisible = true;
+        Check(EnemyPlan.NextMode(rallying).Mode == EnemyMode.Rally, "집결 도중에 다른 모드로 샘");
+
+        // 닿으면 집결을 끝내고 평소대로 판단한다.
+        rallying.RallyArrived = true;
+        EnemyModeChange arrivedSeeing = EnemyPlan.NextMode(rallying);
+        Check(arrivedSeeing.LeaveRally && arrivedSeeing.Mode == EnemyMode.Chase,
+            "집결지에 닿아 플레이어를 보고도 추격하지 않음");
+        rallying.PlayerVisible = false;
+        EnemyModeChange arrivedAlone = EnemyPlan.NextMode(rallying);
+        Check(arrivedAlone.LeaveRally && arrivedAlone.Mode == EnemyMode.Patrol && !arrivedAlone.ResetPatrol,
+            "집결지에 닿았는데 순찰로 돌아가지 않음");
+
+        // 돌아선 상인은 무엇보다 먼저, 멀어도 쫓는다.
+        var merchant = Sight(EnemyMode.Patrol);
+        merchant.HostileMerchant = true;
+        merchant.StepsToPlayer = 99;
+        merchant.Rallying = true;
+        Check(EnemyPlan.NextMode(merchant).Mode == EnemyMode.Chase, "돌아선 상인이 추격을 놓음");
+
+        // 상대 고르기
+        Check(EnemyPlan.PickTarget(false, false, 0f) == EnemyTarget.None, "붙은 상대가 없는데 때림");
+        Check(EnemyPlan.PickTarget(true, false, 0f) == EnemyTarget.Player, "플레이어만 붙었는데 다른 상대를 고름");
+        Check(EnemyPlan.PickTarget(false, true, 0.99f) == EnemyTarget.Partner, "동료만 붙었는데 다른 상대를 고름");
+        Check(EnemyPlan.PickTarget(true, true, 0.49f) == EnemyTarget.Partner
+            && EnemyPlan.PickTarget(true, true, 0.5f) == EnemyTarget.Player,
+            "둘 다 붙었을 때 반반이 아님");
+
+        int partnerPicks = 0;
+        for (int i = 0; i < 100; i++)
+            if (EnemyPlan.PickTarget(true, true, i / 100f) == EnemyTarget.Partner) partnerPicks++;
+        Check(partnerPicks == 50, $"둘 다 붙었을 때 한쪽으로 치우침 (동료 {partnerPicks}/100)");
+    }
+
+    static void TestCellsAndSharedRoutes()
+    {
+        Console.WriteLine("[칸 비교 · 바닥 목록 · 나눠 쓰는 순찰 지도]");
+
+        // 칸 중심(x+0.5)이든 걸어가는 도중의 좌표든, 같은 칸이면 같다고 답해야 한다.
+        Check(GridUtil.CellOf(new Vector3(3.5f, 4.5f)) == new Vector3Int(3, 4, 0), "칸 중심의 칸 계산 오류");
+        Check(GridUtil.SameCell(new Vector3(3.5f, 4.5f), new Vector3(3.05f, 4.95f)),
+            "같은 칸 안의 두 자리를 다른 칸으로 봄");
+        Check(!GridUtil.SameCell(new Vector3(3.95f, 4.5f), new Vector3(4.05f, 4.5f)),
+            "칸 경계를 사이에 둔 두 자리를 같은 칸으로 봄(거리로 견주면 여기서 틀린다)");
+
+        // 음수 좌표. 0 쪽으로 자르면(-0.5 → 0) 칸 -1 과 칸 0 이 한 칸으로 합쳐진다.
+        Check(GridUtil.CellOf(new Vector3(-0.5f, -1.5f)) == new Vector3Int(-1, -2, 0), "음수 좌표의 칸 계산 오류");
+        Check(!GridUtil.SameCell(new Vector3(-0.5f, 0.5f), new Vector3(0.5f, 0.5f)), "칸 -1 과 칸 0 을 같은 칸으로 봄");
+
+        var ground = new GroundObjectRegistry();
+        ground.Add(GridUtil.CellCenter(new Vector3Int(2, 3, 0)));
+        ground.Add(new Vector3(2.9f, 3.1f));
+        Check(ground.Count == 1, "같은 칸을 두 번 넣었더니 둘로 셈");
+        Check(ground.Contains(new Vector3(2.01f, 3.99f)) && ground.Contains(new Vector3Int(2, 3, 0)),
+            "놓인 칸을 못 찾음");
+        Check(!ground.Contains(GridUtil.CellCenter(new Vector3Int(3, 3, 0))), "옆 칸을 놓인 칸으로 봄");
+        Check(ground.Remove(new Vector3(2.5f, 3.5f)) && ground.Count == 0 && !ground.Remove(new Vector3(2.5f, 3.5f)),
+            "지우기가 한 번에 지워지지 않거나 없는 것을 지웠다고 답함");
+
+        var grid = new AsciiGrid(new[]
+        {
+            "#######",
+            "#A...B#",
+            "#######",
+        });
+        var a = grid.Find('A');
+        var b = grid.Find('B');
+        var toA = new Vector3(a.x, a.y);
+        var toB = new Vector3(b.x, b.y);
+
+        var routes = new RouteCache();
+        ChaseMap first = routes.To(grid, toA);
+        Check(ReferenceEquals(first, routes.To(grid, toA)) && routes.Count == 1,
+            "같은 목표를 다시 물었더니 지도를 새로 만듦 — 적마다 탐색이 되풀이된다");
+        Check(!ReferenceEquals(first, routes.To(grid, toB)) && routes.Count == 2,
+            "다른 목표가 같은 지도를 받음");
+        Check(first.TryGetDistance(new Vector2(b.x, b.y), out int steps) && steps == 4,
+            "나눠 쓰는 지도의 걸음 수가 틀림");
+
+        routes.Clear();
+        Check(routes.Count == 0 && !ReferenceEquals(first, routes.To(grid, toA)),
+            "비운 뒤에도 지난 층의 지도를 돌려줌");
     }
 
     static void TestChaseMap()
@@ -3779,6 +4664,35 @@ static class Program
         }
         Check(reached == tries, $"열린 방에서 도달 실패 {tries - reached}건");
 
+        // 순찰 출구 경로는 거리 감소만 허용한다. 막힌 후보 때문에 옆으로 왕복하지 않는다.
+        map.Rebuild(detour, new Vector2(p.x, p.y));
+        Vector2 patrol = new Vector2(e.x, e.y);
+        int patrolSteps = 0;
+        while (patrol != new Vector2(p.x, p.y) && patrolSteps < 100)
+        {
+            Check(map.TryGetDistance(patrol, out int before), "순찰 경로가 끊김");
+            var choices = new List<Vector2>(map.StepsToward(patrol, allowSideways: false));
+            if (choices.Count == 0) break;
+            foreach (Vector2 choice in choices)
+            {
+                map.TryGetDistance(patrol + choice, out int after);
+                Check(after < before, "순찰이 목표에 가까워지지 않는 칸을 후보로 제시함");
+            }
+            patrol += choices[0];
+            patrolSteps++;
+        }
+        Check(patrol == new Vector2(p.x, p.y), "굴곡진 순찰 경로의 출구에 도착하지 못함");
+        Check(new List<Vector2>(map.StepsToward(patrol, allowSideways: false)).Count == 0,
+            "순찰 목표 도착 후에도 이동을 생성함");
+        map.Rebuild(open, new Vector2(1, 1));
+        var strict = new List<Vector2>(map.StepsToward(new Vector2(5, 2), allowSideways: false));
+        Check(strict.Count > 0, "열린 방에서 순찰 출구를 향하지 못함");
+        foreach (var choice in strict)
+        {
+            map.TryGetDistance(new Vector2(5, 2) + choice, out int after);
+            Check(after < 4, "열린 방의 순찰 후보에 옆걸음이 포함됨");
+        }
+
         Console.WriteLine($"  우회 {turns}턴 만에 도달 · 도달률 {reached}/{tries}");
     }
 
@@ -3858,6 +4772,226 @@ static class Program
     }
 
     // ── 모든 방이 이어지는가 + 루프가 요청한 만큼 얹히는가 ─────────────────
+    static void TestCorridorVariety()
+    {
+        Console.WriteLine("[통로 모양과 연결 다양성]");
+        var samples = new Dictionary<CorridorStyle, CorridorRouting.Route>();
+        var from = new Vector3Int(8, 10, 0);
+        var to = new Vector3Int(30, 24, 0);
+        for (int seed = 0; seed < 1000; seed++)
+        {
+            var route = CorridorRouting.Plan(from, to, true, 48, 40, p => false, p => 0, new System.Random(seed));
+            CheckRoute(route, from, to, 48, 40, p => false);
+            if (route == null) continue;
+            samples[route.Style] = route;
+            var replay = CorridorRouting.Plan(from, to, true, 48, 40, p => false, p => 0, new System.Random(seed));
+            Check(string.Join(";", route.Cells) == string.Join(";", replay.Cells), "통로 시드 재현 불일치");
+            if (route.Style == CorridorStyle.Stair || route.Style == CorridorStyle.Detour)
+                Check(CorridorRouting.Turns(route.Cells) >= 3, "새 모양이 두 번 꺾임으로 퇴화함");
+            if (route.Style == CorridorStyle.Detour)
+                Check(route.Cells.Count > 37, "우회로가 최단 경로로 퇴화함");
+            var next = CorridorRouting.Plan(from, to, true, 48, 40, p => false, p => 0, new System.Random(seed), route.Style);
+            Check(next.Style != route.Style, "선택지가 있는데 같은 모양 연속");
+        }
+        Check(samples.Count == 4, "네 가지 실제 통로 모양이 모두 선택되지 않음");
+        // 모든 정형 경로를 막고 위쪽 한 칸 틈으로만 돌아갈 수 있게 한다.
+        bool Barrier(Vector3Int p) => p.x == 20 && p.y < 36;
+        var routed = CorridorRouting.Plan(from, to, true, 48, 40, Barrier, p => 0, new System.Random(1));
+        CheckRoute(routed, from, to, 48, 40, Barrier);
+        Check(routed != null && routed.Style == CorridorStyle.Routed, "장애물 우회 탐색이 실행되지 않음");
+        Check(CorridorRouting.Plan(from, to, true, 48, 40, p => p.x == 20, p => 0, new System.Random(1)) == null,
+            "완전히 막힌 경로를 승인함");
+
+        var doorMethod = typeof(CorridorCarver).GetMethod("VariedDoor", BindingFlags.Static | BindingFlags.NonPublic);
+        var topologies = new HashSet<string>();
+        int complex = 0;
+        for (int seed = 0; seed < 200; seed++)
+        {
+            var random = new System.Random(seed);
+            var layout = new DungeonLayout();
+            for (int x = 0; x < 3; x++)
+            for (int y = 0; y < 3; y++) layout.Rooms.Add(new RoomInfo(3 + x * 18, 3 + y * 18, 7, 7));
+            var edges = RoomGraph.Plan(layout, 3, random);
+            CorridorCarver.PrepareEntrances(layout, 60, 60, random);
+            var links = edges.ConvertAll(e => e.A + "-" + e.B);
+            links.Sort(StringComparer.Ordinal);
+            topologies.Add(string.Join(";", links));
+            var open = new HashSet<Vector3Int>();
+            foreach (var room in layout.Rooms)
+                foreach (var cell in room.InteriorCellRect.allPositionsWithin) open.Add(new Vector3Int(cell.x, cell.y, 0));
+            bool Blocked(Vector3Int p)
+            {
+                foreach (var room in layout.Rooms) if (room.ContainsIncludingWall(p.x, p.y)) return true;
+                return false;
+            }
+            CorridorStyle? previous = null;
+            foreach (var edge in edges)
+            {
+                var a = layout.Rooms[edge.A]; var b = layout.Rooms[edge.B];
+                var route = CorridorCarver.PlanConnection(layout, a, b, 60, 60, random,
+                    open.Contains, p => 0, previous, out var doorA, out var doorB);
+                CheckRoute(route, doorA.Outside, doorB.Outside, 60, 60, p => Blocked(p) && !open.Contains(p));
+                if (route == null) continue;
+                previous = route.Style;
+                if (CorridorRouting.Turns(route.Cells) >= 3) complex++;
+                open.UnionWith(route.Cells); open.Add(doorA.Position); open.Add(doorB.Position);
+            }
+            CheckEntranceWidths(layout, open);
+            Check(DungeonRoutes.TryPlan(layout, 60, 60, open.Contains, seed, out _, out _), "새 통로로 이은 방들이 끊어짐");
+        }
+        Check(topologies.Count > 50, "방 배치가 같으면 연결 대상도 고정됨");
+        Check(complex > 100, "실제 방 배치에서 복잡한 모양이 거의 쓰이지 않음");
+        Console.WriteLine($"  1000 선택 시드 · 200개 9방 연결 · 고유 연결 {topologies.Count} · 3회 이상 굽은 통로 {complex} · 장애물·경계·재현 검사 완료");
+        int denseFailures = 0;
+        for (int seed = 0; seed < 100; seed++)
+        {
+            var random = new System.Random(seed);
+            var layout = new DungeonLayout();
+            for (int attempt = 0; attempt < 400 && layout.Rooms.Count < 18; attempt++)
+            {
+                int w = random.Next(5, 10), h = random.Next(5, 10);
+                var room = new RoomInfo(random.Next(1, 49-w), random.Next(1, 49-h), w, h);
+                if (layout.Rooms.Exists(other => room.GapTo(other) < 2)) continue;
+                layout.Rooms.Add(room);
+            }
+            bool Blocked(Vector3Int p) => layout.Rooms.Exists(room => room.ContainsIncludingWall(p.x, p.y));
+            var open = new HashSet<Vector3Int>();
+            foreach (var room in layout.Rooms)
+                foreach (var cell in room.InteriorCellRect.allPositionsWithin) open.Add(new Vector3Int(cell.x, cell.y, 0));
+            var denseEdges = RoomGraph.Plan(layout, 3, random);
+            CorridorCarver.PrepareEntrances(layout, 50, 50, random);
+            foreach (var edge in denseEdges)
+            {
+                var a = layout.Rooms[edge.A]; var b = layout.Rooms[edge.B];
+                var route = CorridorCarver.PlanConnection(layout, a, b, 50, 50, random,
+                    open.Contains, p => 0, null, out var da, out var db);
+                if (route == null) { denseFailures++; break; }
+                CheckRoute(route, da.Outside, db.Outside, 50, 50, p => Blocked(p) && !open.Contains(p));
+                open.UnionWith(route.Cells); open.Add(da.Position); open.Add(db.Position);
+            }
+            CheckEntranceWidths(layout, open);
+            Check(DungeonRoutes.TryPlan(layout, 50, 50, open.Contains, seed, out _, out _), "촘촘한 방 배치의 연결 실패");
+        }
+        Check(denseFailures == 0, $"촘촘한 배치에서 경로 실패 {denseFailures}회");
+        Console.WriteLine($"  100개 무작위 밀집 배치 검사 완료 (경로 실패 {denseFailures})");
+        var preview = Environment.GetEnvironmentVariable("DUNGEON_PREVIEW");
+        if (!string.IsNullOrEmpty(preview))
+        {
+            var svg = new System.Text.StringBuilder("<svg xmlns='http://www.w3.org/2000/svg' width='1000' height='800' viewBox='0 0 1000 800'><rect width='1000' height='800' fill='#101827'/>");
+            int index = 0;
+            foreach (var style in new[] { CorridorStyle.Corner, CorridorStyle.Dogleg, CorridorStyle.Stair, CorridorStyle.Detour })
+            {
+                if (!samples.TryGetValue(style, out var sample)) continue;
+                int ox = (index % 2) * 500, oy = (index / 2) * 400;
+                string label = new[] { "ㄱ자", "ㄹ자", "계단형", "우회형" }[index++];
+                svg.Append($"<text x='{ox+24}' y='{oy+32}' fill='#e2e8f0' font-family='Malgun Gothic,sans-serif' font-size='22'>{label} · {CorridorRouting.Turns(sample.Cells)}회 꺾임</text>");
+                foreach (var cell in sample.Cells)
+                    svg.Append($"<rect x='{ox+cell.x*10}' y='{oy+60+cell.y*8}' width='9' height='7' fill='#55c9c0'/>");
+                foreach (var cell in new[] { from, to })
+                    svg.Append($"<rect x='{ox+cell.x*10-2}' y='{oy+60+cell.y*8-2}' width='13' height='11' fill='#ffcf6b'/>");
+            }
+            svg.Append("</svg>");
+            System.IO.File.WriteAllText(preview, svg.ToString());
+        }
+    }
+
+    static void TestEntranceWidthRules()
+    {
+        Console.WriteLine("[입구 한 칸 폭]");
+        foreach (var forward in new[] { Vector3Int.right, Vector3Int.left, Vector3Int.up, Vector3Int.down })
+        {
+            var door = new Door(new Vector3Int(10, 10, 0), new Vector3Int(10, 10, 0) + forward);
+            var side = new Vector3Int(-forward.y, forward.x, 0);
+            var open = new HashSet<Vector3Int> { door.Position, door.Outside, door.Outside + forward };
+            Check(EntranceRules.IsNarrow(door, open.Contains), "정상적인 한 칸 입구 거부");
+            foreach (var cell in new[] { door.Position + side, door.Position - side, door.Outside + side, door.Outside - side })
+            {
+                open.Add(cell);
+                Check(!EntranceRules.IsNarrow(door, open.Contains), "입구 확장 누락");
+                open.Remove(cell);
+            }
+        }
+        var layout = new DungeonLayout();
+        var a = new RoomInfo(3, 3, 7, 7); var b = new RoomInfo(25, 25, 7, 7);
+        layout.Rooms.Add(a); layout.Rooms.Add(b);
+        CorridorCarver.PrepareEntrances(layout, 40, 40, new System.Random(1));
+        int beforeA = a.Doors.Count, beforeB = b.Doors.Count;
+        var route = CorridorCarver.PlanConnection(layout, a, b, 40, 40, new System.Random(2),
+            p => true, p => 0, null, out _, out _);
+        Check(route == null, "입구 양옆이 모두 열린 배치 승인");
+        Check(a.Doors.Count == beforeA && b.Doors.Count == beforeB, "실패한 문 후보가 명단에 남음");
+        Console.WriteLine("  네 방향 · 문과 목 양옆 · 실패 후보 복구 · 300개 배치의 모든 입구 폭 검사 완료");
+    }
+    static void CheckEntranceWidths(DungeonLayout layout, HashSet<Vector3Int> open)
+    {
+        foreach (var room in layout.Rooms)
+        foreach (var door in room.Doors)
+        {
+            var direction = door.Outside - door.Position;
+            var side = new Vector3Int(-direction.y, direction.x, 0);
+            // 검사 쪽은 EntranceRules를 부르지 않고 실제 열린 네 칸을 직접 확인한다.
+            Check(!open.Contains(door.Position + side) && !open.Contains(door.Position - side), "방 입구가 두 칸 이상 열림");
+            Check(!open.Contains(door.Outside + side) && !open.Contains(door.Outside - side), "입구 바로 밖이 옆으로 확장됨");
+        }
+    }
+    static void CheckRoute(CorridorRouting.Route route, Vector3Int from, Vector3Int to,
+        int width, int height, Func<Vector3Int, bool> blocked)
+    {
+        Check(route != null, "연결 가능한 통로를 찾지 못함");
+        if (route == null) return;
+        Check(route.Cells[0] == from && route.Cells[route.Cells.Count-1] == to, "통로 끝점 불일치");
+        var seen = new HashSet<Vector3Int>();
+        for (int i = 0; i < route.Cells.Count; i++)
+        {
+            var cell = route.Cells[i];
+            Check(cell.x > 0 && cell.y > 0 && cell.x < width-1 && cell.y < height-1 && !blocked(cell), "통로가 경계 또는 방 침범");
+            Check(seen.Add(cell), "통로가 자기 자신을 되밟음");
+            if (i > 0)
+            {
+                var delta = cell - route.Cells[i-1];
+                Check(Math.Abs(delta.x) + Math.Abs(delta.y) == 1, "통로가 끊기거나 대각선으로 건너뜀");
+            }
+        }
+    }
+    static void TestDungeonRoutes()
+    {
+        Console.WriteLine("[던전 진행 경로]");
+        var layout = new DungeonLayout();
+        layout.Rooms.Add(new RoomInfo(1, 1, 4, 4));
+        layout.Rooms.Add(new RoomInfo(12, 1, 4, 4) { Kind = RoomKind.MonsterHouse });
+        var open = new HashSet<Vector3Int>();
+        foreach (var room in layout.Rooms)
+            foreach (var cell in room.InteriorCellRect.allPositionsWithin)
+                open.Add(new Vector3Int(cell.x, cell.y, 0));
+        for (int x = 4; x <= 13; x++) open.Add(new Vector3Int(x, 3, 0));
+        var goals = new HashSet<Vector3Int>();
+        int houseStarts = 0;
+        for (int seed = 0; seed < 1000; seed++)
+        {
+            Check(DungeonRoutes.TryPlan(layout, 20, 8, open.Contains, seed, out var start, out var stairs), "연결된 던전 거부");
+            if (start == layout.Rooms[1].Center) houseStarts++;
+            Check(start == layout.Rooms[0].Center || start == layout.Rooms[1].Center, "방 중심이 아닌 시작 칸");
+            var distances = DungeonRoutes.Distances(20, 8, open.Contains, start);
+            Check(distances.TryGetValue(stairs, out int distance) && distance >= 10, "계단이 너무 가깝거나 고립됨");
+            Check(DungeonRoutes.TryPlan(layout, 20, 8, open.Contains, seed, out var again, out var goal)
+                && start == again && stairs == goal, "시드 재현 불일치");
+            goals.Add(stairs);
+        }
+        Check(houseStarts > 0 && houseStarts < 1000, "하우스 시작이 배제되거나 강제됨");
+        Check(goals.Count > 1, "계단이 항상 같은 자리에 고정됨");
+        open.Remove(new Vector3Int(8, 3, 0));
+        Check(!DungeonRoutes.TryPlan(layout, 20, 8, open.Contains, 0, out _, out _), "끊어진 던전 승인됨");
+        open.Add(new Vector3Int(8, 3, 0));
+        open.Remove(new Vector3Int(14, 2, 0));
+        Check(!DungeonRoutes.TryPlan(layout, 20, 8, open.Contains, 0, out _, out _), "방 구석 막힘을 놓침");
+        Check(!DungeonRoutes.TryPlan(new DungeonLayout(), 20, 8, open.Contains, 0, out _, out _), "빈 던전 승인됨");
+        Check(DungeonRoutes.Distances(3, 3, p => true, Vector3Int.zero).Count == 9, "탐색이 맵 경계를 넘어감");
+        var fallback = new DungeonLayout();
+        fallback.Rooms.Add(new RoomInfo(1, 1, 6, 6));
+        Check(DungeonRoutes.TryPlan(fallback, 9, 9, p => fallback.RoomAt(p.x, p.y) != null,
+            5, out var a, out var b) && a != b, "한 방 대체 던전 진행 불가");
+        Console.WriteLine("  1000 시드 · 연결 단절 · 방 구석 · 경계 · 재현 · 계단 다양성 · 대체 방 검사 완료");
+    }
     static void TestRoomGraph()
     {
         Console.WriteLine("[방 연결 그래프]");
@@ -3871,7 +5005,7 @@ static class Program
                 layout.Rooms.Add(new RoomInfo(rnd.Next(1, 40), rnd.Next(1, 40), 6, 6));
 
             int extra = rnd.Next(0, 6);
-            var edges = RoomGraph.Plan(layout, extra);
+            var edges = RoomGraph.Plan(layout, extra, rnd);
 
             // 신장 트리(n-1) + 요청한 루프 수 만큼 나와야 한다
             int maxPossibleLoops = n * (n - 1) / 2 - (n - 1);
@@ -3901,6 +5035,66 @@ static class Program
     // 다시 불러도 초기화되지 않는다. 에디터는 Play 마다 도메인을 다시 로드해
     // 저절로 새 값이 되므로 이 문제가 아예 드러나지 않고, 빌드에서만 죽은
     // 캐릭터의 수치를 물려받는다. 그래서 에디터가 아닌 이곳에서 확인한다.
+    // ── 판 상태의 두 수명: 층을 넘으면 무엇이 남고, 새 판이면 무엇이 지워지는가 ──
+    static void TestRunState()
+    {
+        Console.WriteLine("[판 상태 — 층 단위 · 판 단위]");
+
+        var run = new RunState(GameManager.BagCapacity);
+        run.BeginFloor();
+        Check(run.Stage == 1, $"첫 층이 1층이 아님 {run.Stage}");
+
+        // 한 층을 진행한 흔적을 남긴다.
+        run.Stats.AddGold(500);
+        run.Stats.TakeDamage(3);
+        run.Log.Add("1층에서 지나간 메시지");
+        run.Marks.Set(20001, MarkShape.Circle, MarkColor.Red);
+        run.Conditions.Apply("sleep", 3);
+        run.TurnCount = 42;
+        run.MissStreak = 4;
+        run.LookDirection = Vector2.left;
+        run.Ground.Add(new Vector3(2.5f, 2.5f));
+        run.Noise.Report(new Vector3Int(1, 1, 0), 42);
+
+        var grid = new AsciiGrid(new[] { "####", "#..#", "####" });
+        ChaseMap route = run.PatrolRoutes.To(grid, new Vector3(1, 1));
+        Check(run.PatrolRoutes.Count == 1 && route != null, "준비 실패: 순찰 지도가 만들어지지 않음");
+        Check(run.Noise.TryGetLatest(42, out _), "준비 실패: 소리가 적히지 않음");
+
+        var stats = run.Stats;
+        var log = run.Log;
+
+        // 다음 층: 판 단위는 남고 층 단위는 비워진다.
+        run.BeginFloor();
+        Check(run.Stage == 2 && run.TurnCount == 0, "층을 넘었는데 층 · 턴이 맞지 않음");
+        Check(run.LookDirection == Vector2.down, "새 층에서 바라보는 방향이 처음으로 돌아가지 않음");
+        Check(ReferenceEquals(run.Stats, stats) && run.Stats.Gold == 500, "층을 넘었더니 수치 · 소지금이 사라짐");
+        Check(run.Log.Count == 1 && !run.Marks.IsEmpty && run.Conditions.Has("sleep"),
+            "층을 넘었더니 이력 · 표식 · 상태이상이 사라짐 — 판 단위다");
+        Check(run.MissStreak == 4, "층을 넘었더니 연속 빗나감이 끊김");
+        Check(run.Ground.Count == 0, "지난 층의 바닥 물건 자리가 남음");
+        Check(run.PatrolRoutes.Count == 0, "지난 층의 순찰 지도가 남음 — 새 층의 벽을 모른다");
+        Check(!run.Noise.TryGetLatest(42, out _), "지난 층의 소리가 남음");
+
+        // 새 판: 전부 처음으로. 메시지 창이 들고 있는 것들은 같은 객체를 비운다.
+        run.Gear = new Equipment();
+        run.Reset();
+        Check(run.Stage == 0 && run.TurnCount == 0 && run.MissStreak == 0, "새 판인데 층 · 턴 · 연속 빗나감이 남음");
+        Check(!ReferenceEquals(run.Stats, stats) && run.Stats.Gold == 0, "새 판인데 수치가 남음");
+        Check(run.Bag.IsEmpty && run.Gear == null, "새 판인데 가방 · 장비가 남음");
+        Check(ReferenceEquals(run.Log, log) && run.Log.Count == 0,
+            "이력을 비우지 않고 갈아 끼움 — 메시지 창은 지난 판의 것에 계속 쌓는다");
+        Check(run.Marks.IsEmpty && !run.Conditions.Has("sleep") && run.Party.IsEmpty,
+            "새 판인데 표식 · 상태이상 · 동료 명단이 남음");
+        Check(run.LookDirection == Vector2.down, "새 판인데 바라보는 방향이 남음");
+
+        // GameManager 의 창구가 실제로 같은 판 상태를 가리키는가.
+        Check(ReferenceEquals(GameManager.Stats, GameManager.Run.Stats)
+            && ReferenceEquals(GameManager.Log, GameManager.Run.Log)
+            && ReferenceEquals(GameManager.Ground, GameManager.Run.Ground),
+            "GameManager 의 static 이 판 상태와 다른 것을 가리킴");
+    }
+
     static void TestResetRun()
     {
         Console.WriteLine("[새 판 초기화]");

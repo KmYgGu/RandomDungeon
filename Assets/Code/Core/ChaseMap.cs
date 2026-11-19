@@ -107,7 +107,7 @@ public class ChaseMap
     /// 첫 번째가 최선이지만, 다른 적이 그 칸을 먼저 찜했을 수 있으므로
     /// 부르는 쪽이 순서대로 시도해 보게 한다.
     /// </summary>
-    public IEnumerable<Vector2> StepsToward(Vector2 worldPosition)
+    public IEnumerable<Vector2> StepsToward(Vector2 worldPosition, bool allowSideways = true)
     {
         if (!ready) yield break;
 
@@ -129,7 +129,7 @@ public class ChaseMap
             if (!CanCrossDiagonally(from, offset)) continue;
 
             int distance = GetSteps(next);
-            if (distance == Unreachable || distance > here) continue;
+            if (distance == Unreachable || distance > here || (!allowSideways && distance == here)) continue;
 
             candidates.Add((distance, new Vector2(offset.x, offset.y)));
         }

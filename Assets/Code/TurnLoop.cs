@@ -70,6 +70,32 @@ public class TurnLoop
         if (!GameManager.FastForward)
             yield return new WaitForSeconds(EnemyTurnDelay);
 
+        // 걷는 중 밟은 함정이 위의 짧은 대기 사이에 강제 이동을 시작했을 수도 있다.
+        while (GameManager.ForcedMoveRunning)
+            yield return null;
+
+        ShopRoom.TickAll();
+
+        // 일반 걷기는 위의 대기 후 물리 좌표, 빨리감기는 즉시 확정된 도착 칸을 사용한다.
+        // 하우스가 없으면 코루틴 대기를 추가하지 않아 달리기 속도를 유지한다.
+        if (game.MapMake != null && GameManager.FloorTilemap != null)
+        {
+            Vector3 position = GameManager.FastForward ? (Vector3)game.PlayerPosition : game.Player.transform.position;
+            Vector3Int cell = GameManager.FloorTilemap.WorldToCell(position);
+
+            ShopRoom shop = ShopRoom.ObserveEntrance(cell);
+            if (shop != null) yield return shop.Welcome();
+
+            var house = game.MapMake.TryEnterMonsterHouse(cell);
+            if (house != null)
+            {
+                yield return house.Enter(game);
+                // 입장 연출이 끝나면 먼저 대응할 기회를 준다. 동료·적 행동은 다음 턴부터.
+                game.playersTurn = true;
+                yield break;
+            }
+        }
+
         // 적들이 서로 같은 칸으로 몰리지 않도록, 이번 턴의 예약 위치를 새로 받는다.
         game.enemyPositions.Clear();
 
@@ -122,9 +148,17 @@ public class TurnLoop
         //    가까운 적부터 움직인다. 줄지어 쫓아올 때 앞선 적이 먼저 비켜 주어야
         //    뒤의 적이 그 칸을 이어받는다. 순서가 반대면 뒤의 적이 아직 차 있는
         //    칸을 보고 물러서서, 도망치는 플레이어와의 간격이 계속 벌어진다.
-        movers.Sort((a, b) => a.StepsToPlayer.CompareTo(b.StepsToPlayer));
+        //
+        //    걸음 수는 <b>한 번만</b> 재서 그 값으로 줄을 세운다. 견줄 때마다 다시
+        //    재면 정렬이 도는 동안 같은 적의 거리를 여러 번 묻게 된다.
+        var stepsOfMovers = new float[movers.Count];
+        var orderedMovers = movers.ToArray();
+        for (int i = 0; i < orderedMovers.Length; i++)
+            stepsOfMovers[i] = orderedMovers[i].StepsToPlayer;
 
-        foreach (Enemy enemy in movers)
+        System.Array.Sort(stepsOfMovers, orderedMovers);
+
+        foreach (Enemy enemy in orderedMovers)
             enemy.TakeStep();
 
         // 옮긴 좌표(MovePosition)가 화면에 반영되도록 한 번만 기다린다.
@@ -227,7 +261,11 @@ public class TurnLoop
 
     private void ApplyHungerTick()
     {
-        if (GameManager.TurnCount % HungerInterval == 0 && !GameManager.Stats.IsStarving)
+        // 굶는 동안에는 배도 더 고파지지 않고 몸도 아물지 않는다.
+        // 이번 턴에 막 굶기 시작한 경우를 가르려고 먼저 적어 둔다.
+        bool wasStarving = GameManager.Stats.IsStarving;
+
+        if (!wasStarving && GameManager.TurnCount % HungerInterval == 0)
         {
             int before = GameManager.Stats.Hunger;
             GameManager.Stats.ConsumeHunger();
@@ -237,17 +275,23 @@ public class TurnLoop
 
             if (level != HungerWarning.Level.None)
                 game.ShowMessage(HungerWarning.MessageOf(level));
+        }
 
-            if (GameManager.TurnCount % RecoveryTickInterval == 0)
-            {
-                // 한 턴에 1 이 안 차는 만큼은 안에 쌓였다가 나중에 한꺼번에 오른다
-                // (PlayerStats.RecoverNaturally). 가득 찼는지도 그쪽이 본다.
-                GameManager.Stats.RecoverNaturally();
+        // ── 회복은 만복도 간격과 따로 센다 ────────────────────────────────
+        //
+        // 예전에는 이 검사가 위의 만복도 검사 <b>안에</b> 들어 있었다. 두 간격이
+        // 5 와 10 이라 우연히 맞물려 돌았을 뿐이고, 만복도절약 장비가 간격을
+        // 7 로 만들면 회복은 70턴(두 수의 최소공배수)에 한 번이 된다. 에러 없이
+        // "가끔만 회복되는" 모습이라, 힘이 깎여 회복이 멈추던 버그와 구별이 안 된다.
+        if (!wasStarving && GameManager.TurnCount % RecoveryTickInterval == 0)
+        {
+            // 한 턴에 1 이 안 차는 만큼은 안에 쌓였다가 나중에 한꺼번에 오른다
+            // (PlayerStats.RecoverNaturally). 가득 찼는지도 그쪽이 본다.
+            GameManager.Stats.RecoverNaturally();
 
-                // 동료도 함께 아문다. 가방이 없어 약을 못 먹고 층을 넘어도 차지
-                // 않으므로, 이것이 없으면 오래 데리고 다닐수록 반드시 쓰러진다.
-                GameManager.Party.HealAll(PartnerNaturalRecovery);
-            }
+            // 동료도 함께 아문다. 가방이 없어 약을 못 먹고 층을 넘어도 차지
+            // 않으므로, 이것이 없으면 오래 데리고 다닐수록 반드시 쓰러진다.
+            GameManager.Party.HealAll(PartnerNaturalRecovery);
         }
 
         if (GameManager.Stats.IsStarving && !GameManager.Stats.IsDead)

@@ -35,6 +35,7 @@ public static class MoveIntent
     /// </summary>
     public static IEnumerable<Vector2> Toward(Vector2 preferred)
     {
+        if (preferred == Vector2.zero) yield break;
         yield return preferred;
 
         if (preferred.x != 0 && preferred.y != 0)

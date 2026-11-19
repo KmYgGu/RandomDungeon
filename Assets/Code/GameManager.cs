@@ -86,23 +86,9 @@ public class GameManager : MonoBehaviour
     /// <summary>가방에 넣을 수 있는 최대 개수.</summary>
     public const int BagCapacity = 10;
 
-    /// <summary>적들이 움직이기 전의 연출용 대기.</summary>
-    private const float EnemyTurnDelay = 0.1f;
-
-    /// <summary>몇 턴마다 배가 고파지는가.</summary>
-    private const int HungerTickInterval = 5;
-
-    /// <summary>몇 턴마다 체력이 자연 회복되는가.</summary>
-    private const int RecoveryTickInterval = 10;
-
-    /// <summary>
-    /// 동료가 한 번에 아무는 양.
-    ///
-    /// 플레이어는 힘에 비례해 회복하지만(PlayerStats.NaturalRecoveryAmount)
-    /// 동료에게는 힘이 없다. 고정으로 두되, 동료의 체력이 플레이어보다 훨씬
-    /// 적으므로(10~25) 같은 1 이라도 비율로는 더 크다.
-    /// </summary>
-    private const int PartnerNaturalRecovery = 1;
+    // 턴 간격(적 턴 대기 · 만복도 · 자연 회복)은 TurnLoop 이, 함정 문구를 읽을
+    // 틈은 ForcedMoves 가 들고 있다. 여기에도 같은 이름의 상수가 남아 있었는데,
+    // 쓰이지 않는 const 는 경고가 나지 않아 고쳐도 아무 일이 없는 숫자가 되어 있었다.
 
     /// <summary>층 진입 안내 문구가 사라지기까지의 시간.</summary>
     private const float LevelTextHoldTime = 1f;
@@ -114,24 +100,42 @@ public class GameManager : MonoBehaviour
     private static readonly Color LevelImageColor = new Color(255f / 255f, 107f / 255f, 107f / 255f);
 
     // ── 씬을 넘어가도 유지되는 게임 상태 ────────────────────────────────────
-    public static PlayerStats Stats { get; private set; } = new PlayerStats();
-    public static Inventory Bag { get; private set; } = new Inventory(BagCapacity);
+    //
+    // 판 상태는 전부 RunState 하나가 들고 있다. 아래 static 들은 예전 이름 그대로
+    // 그쪽을 가리키는 창구일 뿐이라, 부르는 곳(GameManager.Stats 등)은 바뀌지 않았다.
+    // 판 상태를 더할 때는 여기가 아니라 RunState 에 더한다.
+
+    /// <summary>
+    /// 지금 판의 상태. <b>갈아 끼우지 않는다</b> — 새 판은 Reset 으로 비운다
+    /// (메시지 창처럼 안의 것을 받아 들고 계속 쓰는 쪽이 있다. RunState 주석).
+    /// </summary>
+    public static RunState Run { get; } = new RunState(BagCapacity);
+
+    public static PlayerStats Stats => Run.Stats;
+    public static Inventory Bag => Run.Bag;
 
     /// <summary>지금 착용 중인 장비. Awake 에서 아이템 목록을 받아 만들어진다.</summary>
-    public static Equipment Gear { get; private set; }
+    public static Equipment Gear
+    {
+        get => Run.Gear;
+        private set => Run.Gear = value;
+    }
 
     /// <summary>장비까지 반영한 최종 공격력.</summary>
     public static int AttackPower => Stats.TotalAttack(Gear != null ? Gear.AttackBonus : 0);
 
     /// <summary>장비까지 반영한 최종 방어력.</summary>
     public static int DefensePower => Stats.TotalDefense(Gear != null ? Gear.DefenseBonus : 0);
-    public static GroundObjectRegistry Ground { get; private set; } = new GroundObjectRegistry();
+    public static GroundObjectRegistry Ground => Run.Ground;
 
     /// <summary>
     /// 플레이어까지의 걸음 수 지도. 추격하는 적들이 길을 찾는 데 쓴다.
     /// 턴이 시작될 때 한 번 갱신하고, 그 턴의 모든 적이 함께 본다.
     /// </summary>
-    public static ChaseMap Chase { get; private set; } = new ChaseMap();
+    public static ChaseMap Chase => Run.Chase;
+
+    /// <summary>순찰하는 적들이 나눠 쓰는 문까지의 지도. 층 단위다(RouteCache 주석).</summary>
+    public static RouteCache PatrolRoutes => Run.PatrolRoutes;
 
     /// <summary>
     /// 메시지 창을 지나간 글의 이력. 상태창의 '로그' 가 읽는다.
@@ -139,27 +143,23 @@ public class GameManager : MonoBehaviour
     /// 층을 넘어가도 이어져야 한다. 아래층으로 내려가는 순간 이력이 끊기면
     /// 정작 되짚어 보고 싶은 직전 몇 수가 함께 사라진다.
     ///
-    /// 바꿔 끼울 수 없게 읽기 전용으로 두었다. 메시지 창이 이 객체를 그대로
-    /// 들고 있어서, 새 것으로 갈아 끼우면 창은 지난 판의 것에 계속 쌓는다.
-    /// 판을 새로 시작할 때는 ResetRun() 이 비운다.
+    /// 메시지 창이 이 객체를 그대로 들고 있어서 갈아 끼우지 않고 비운다(RunState).
     /// </summary>
-    public static MessageLog Log { get; } = new MessageLog();
+    public static MessageLog Log => Run.Log;
 
     /// <summary>
     /// 지금 걸려 있는 상태이상. 함정 · 아이템 · 능력이 모두 여기에 건다.
     ///
-    /// 판 단위 상태라 층을 넘어가도 이어진다. ResetRun() 이 비운다.
-    /// Log 와 같은 이유로 읽기 전용이다 — 갈아 끼우면 걸어 둔 곳과 보는 곳이 갈린다.
+    /// 판 단위 상태라 층을 넘어가도 이어진다. 새 판에서 비워진다.
     /// </summary>
-    public static ConditionTracker Conditions { get; } = new ConditionTracker();
+    public static ConditionTracker Conditions => Run.Conditions;
 
     /// <summary>
     /// 아이템 종류마다 손으로 붙여 둔 표식. 가방·바닥 표시가 이것을 읽는다.
     ///
     /// 그 판에서 알아낸 것이라 층을 넘어가도 남고 새 판에서 지워진다.
-    /// Log 와 같은 이유로 읽기 전용이다 — 갈아 끼우면 적어 둔 곳과 보는 곳이 갈린다.
     /// </summary>
-    public static MarkBook Marks { get; } = new MarkBook();
+    public static MarkBook Marks => Run.Marks;
 
     private static ItemEncyclopedia itemDex;
 
@@ -287,22 +287,17 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>
-    /// 이번 판에서 공격이 연달아 몇 번 빗나갔는가.
-    ///
-    /// 최고 기록만 남기면 되지만 <b>지금 몇 번째인지</b>는 판이 도는 동안 들고
-    /// 있어야 해서 여기 둔다. 맞히는 순간 0 으로 돌아간다. ResetRun 이 비운다.
+    /// 공격이 빗나갔다. 연속 횟수를 세고 최고 기록을 갱신한다.
+    /// 지금 몇 번째인지는 판 상태라 RunState 가 센다.
     /// </summary>
-    private static int missStreak;
-
-    /// <summary>공격이 빗나갔다. 연속 횟수를 세고 최고 기록을 갱신한다.</summary>
     public static void ReportMiss()
     {
-        missStreak++;
-        ReportRecord(RecordStat.LongestMissStreak, missStreak);
+        Run.MissStreak++;
+        ReportRecord(RecordStat.LongestMissStreak, Run.MissStreak);
     }
 
     /// <summary>공격이 맞았다. 연속 빗나감이 끊긴다.</summary>
-    public static void ReportHit() => missStreak = 0;
+    public static void ReportHit() => Run.MissStreak = 0;
 
     /// <summary>
     /// 모험이 끝났다. 점수를 매겨 기록에 남기고, 그 점수를 돌려준다.
@@ -322,6 +317,9 @@ public class GameManager : MonoBehaviour
         ReportRecord(RecordStat.LongestRun, TurnCount);
         ReportRecord(RecordStat.HighestLevel, Stats.Level);
 
+        // 판이 끝났다. 뒤이어 씬이 다시 불리므로 여기서 디스크에 내린다.
+        EncyclopediaStorage.Flush();
+
         return score;
     }
 
@@ -330,23 +328,37 @@ public class GameManager : MonoBehaviour
     /// 동료가 듣는다(앞으로 몇몇 적도 듣는다).
     ///
     /// <b>층 단위</b>다. 지난 층의 소리를 따라가면 갈 수 없는 자리를 향해 걷는다.
-    /// StartNextStage 와 ResetRun 이 비운다.
     /// </summary>
-    public static NoiseBoard Noise { get; } = new NoiseBoard();
+    public static NoiseBoard Noise => Run.Noise;
 
     /// <summary>소리가 났다고 적는다. 칸 좌표로 적는다(월드 좌표를 받아 바꾼다).</summary>
     public static void ReportNoise(Vector3 where)
         => Noise.Report(
             new Vector3Int(Mathf.FloorToInt(where.x), Mathf.FloorToInt(where.y), 0), TurnCount);
 
-    public static int Stage { get; private set; }
-    public static int TurnCount { get; internal set; }
+    public static int Stage => Run.Stage;
+
+    public static int TurnCount
+    {
+        get => Run.TurnCount;
+        internal set => Run.TurnCount = value;
+    }
 
     /// <summary>바닥 타일맵. RandomDung 이 층을 만들 때 채워 넣는다.</summary>
     public static Tilemap FloorTilemap { get; set; }
 
     /// <summary>플레이어가 바라보는 방향. 공격과 던지기가 이 방향을 쓴다.</summary>
-    public static Vector2 LookDirection { get; set; } = Vector2.down;
+    public static Vector2 LookDirection
+    {
+        get => Run.LookDirection;
+        set => Run.LookDirection = value;
+    }
+
+    // ── 여기서부터는 판 상태가 아니다 ───────────────────────────────────────
+    //
+    // "지금 무슨 일이 벌어지는 중인가" 를 나타내는 값들이다. 저장했다가 불러올
+    // 것이 아니라서 RunState 에 넣지 않았다. 새 판이 시작될 때 ResetRun 이
+    // 함께 되돌린다.
 
     /// <summary>이번 턴에 이미 밟은 것(계단/아이템)을 처리했는가. 중복 처리를 막는다.</summary>
     public static bool InteractionHandled { get; set; }
@@ -392,9 +404,9 @@ public class GameManager : MonoBehaviour
     /// <summary>
     /// 데리고 다니는 동료 명단. <b>층을 넘어가도 남는 것은 이쪽</b>이고,
     /// 오브젝트(partners)는 층마다 이 명단대로 다시 만들어진다.
-    /// 판이 끝나면 ResetRun 이 비운다.
+    /// 판이 끝나면 비워진다(RunState).
     /// </summary>
-    public static PartnerRoster Party { get; private set; } = new PartnerRoster();
+    public static PartnerRoster Party => Run.Party;
     public List<Vector2> enemyPositions = new List<Vector2>();
     public Vector2 PlayerPosition;
 
@@ -445,6 +457,8 @@ public class GameManager : MonoBehaviour
         DontDestroyOnLoad(gameObject);
         DontDestroyOnLoad(UiCanvas);
 
+        ConfigureUiCanvas();
+
         // 살아남은 GameManager 가 없었다는 것은 새 판이 시작됐다는 뜻이다.
         // static 으로 들고 있는 값들은 씬을 다시 불러도 남으므로 여기서 되돌린다.
         // (Gear 를 비우기 때문에 BuildCollaborators 보다 반드시 앞에 와야 한다.)
@@ -458,6 +472,15 @@ public class GameManager : MonoBehaviour
         StartNextStage();
     }
 
+    /// <summary>화면에 직접 UI를 그려 게임 카메라의 이동과 픽셀 보정을 분리한다.</summary>
+    public void ConfigureUiCanvas()
+    {
+        var uiCanvas = UiCanvas != null ? UiCanvas.GetComponent<Canvas>() : null;
+        if (uiCanvas == null) return;
+        uiCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        uiCanvas.worldCamera = null;
+        uiCanvas.pixelPerfect = true;
+    }
     /// <summary>Inspector 로 받아 둔 UI 참조를 각 뷰에 나눠 준다.</summary>
     private void BuildCollaborators()
     {
@@ -578,6 +601,18 @@ public class GameManager : MonoBehaviour
     }
 
 
+    // 앱이 뒤로 가거나 꺼질 때는 다시 돌아온다는 보장이 없다(모바일은 뒤에 둔 앱을
+    // 말없이 죽인다). 적어 둔 도감·기록을 그 전에 내려 둔다.
+    private void OnApplicationPause(bool paused)
+    {
+        if (paused && instance == this) EncyclopediaStorage.Flush();
+    }
+
+    private void OnApplicationQuit()
+    {
+        if (instance == this) EncyclopediaStorage.Flush();
+    }
+
     private void Update()
     {
         hud.Refresh(Stats, Stage);
@@ -604,45 +639,30 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public static void ResetRun()
     {
+        ShopRoom.ResetAll();
         // 가방에 넣은 아이템은 DontDestroyOnLoad 로 옮겨 둔 것이라 씬을 다시
         // 불러도 사라지지 않는다. 여기서 직접 지우지 않으면 판을 거듭할수록
         // 보이지 않는 오브젝트가 계속 쌓인다.
+        //
+        // 반드시 판 상태를 비우기 <b>전에</b> 한다. 비운 뒤에는 이미 새 가방이다.
         for (int i = 0; i < Bag.Count; i++)
         {
             if (Bag[i] != null) Destroy(Bag[i]);
         }
 
-        Stats = new PlayerStats();
-        Bag = new Inventory(BagCapacity);
-        Ground = new GroundObjectRegistry();
-        Chase = new ChaseMap();
-
-        // 장비는 아이템 목록이 있어야 만들 수 있다. 곧 BuildCollaborators 가 만든다.
-        Gear = null;
-
-        // 동료 명단. 비우지 않으면 죽은 판의 동료가 다음 판까지 따라온다 —
-        // 에디터에서는 도메인 리로드가 가려 주고 빌드에서만 드러난다.
-        Party.Clear();
-        Noise.Clear();
-
-        // 새 객체로 갈아 끼우지 않고 비운다 — 위 Log 의 설명 참고.
-        Log.Clear();
-        Conditions.Clear();
-        Marks.Clear();
-
-        // 연속 빗나감은 판 단위다. 지난 판의 것이 이어지면 한 번도 그만큼 연달아
-        // 빗나간 적이 없는데도 기록이 선다.
-        missStreak = 0;
+        // 판 상태 — 수치 · 가방 · 장비 · 동료 명단 · 이력 · 상태이상 · 표식 · 층 ·
+        // 턴 · 바라보는 방향 · 연속 빗나감, 그리고 층 단위의 바닥 · 지도 · 소리.
+        // 무엇을 비우는지는 RunState.Reset 이 안다. 장비는 비워 두면 곧
+        // BuildCollaborators 가 만든다.
+        Run.Reset();
 
         // '던전 시도 횟수' 는 여기서 세지 않는다. 이 메서드는 값만 되돌리는 순수한
         // 일이라 Unity 없이도 도는데(Tools/Verify 가 실제로 그렇게 부른다), 기록을
         // 적으면 PlayerPrefs 를 건드리게 되어 거기서 죽는다. 판이 시작되는 것을
         // 실제로 아는 자리는 Awake 이므로 세는 일도 그쪽에 둔다.
 
-        Stage = 0;              // 뒤이어 StartNextStage() 가 1층으로 올린다.
-        TurnCount = 0;
+        // 여기부터는 판 상태가 아니라 "지금 벌어지는 일" 이다(위 static 들의 주석).
         FloorTilemap = null;
-        LookDirection = Vector2.down;
         InteractionHandled = false;
         FastForward = false;
         ForcedMoveRunning = false;
@@ -654,11 +674,10 @@ public class GameManager : MonoBehaviour
     /// <summary>다음 층으로 넘어간다. 씬을 다시 불러온 직후에 호출된다.</summary>
     public void StartNextStage()
     {
-        Stage++;
-        TurnCount = 0;
+        // 층을 올리고 층 단위 상태(바닥 · 소리 · 순찰 지도)를 비운다.
+        Run.BeginFloor();
 
         playersTurn = true;
-        LookDirection = Vector2.down;
         InputFocus.Reset();
         GameInput.Reset();
         InteractionHandled = false;
@@ -669,14 +688,32 @@ public class GameManager : MonoBehaviour
         enemies.Clear();
         partners.Clear();          // 오브젝트는 씬과 함께 사라졌다. 명단(Party)은 남는다.
         enemyPositions.Clear();
-        Ground.Clear();
-        Noise.Clear();      // 지난 층의 소리를 새 층에서 따라가면 안 된다.
         messageBox.Hide();
 
+        // 층을 넘는 고비마다 도감·기록을 디스크에 내린다(EncyclopediaStorage 주석).
+        EncyclopediaStorage.Flush();
+
         LevelTextMeshPro.text = $"던전의 지하 {Stage}층";
-        StartCoroutine(FadeOutLevelImage());
+        Coroutine introduction = StartCoroutine(FadeOutLevelImage());
 
         MapMake.GenerateDungeon();
+        var startingHouse = MapMake.TryEnterMonsterHouse(MapMake.StartCell);
+        var startingShop = ShopRoom.ObserveEntrance(MapMake.StartCell);
+        if (startingHouse != null || startingShop != null)
+        {
+            playersTurn = false;
+            InputFocus.Give(InputOwner.Prompt);
+            StartCoroutine(EnterStartingRoom(startingHouse != null ? startingHouse.Enter(this) : startingShop.Welcome(), introduction));
+        }
+    }
+
+    private IEnumerator EnterStartingRoom(IEnumerator roomEvent, Coroutine introduction)
+    {
+        // 층 안내와 새 개체들의 Start가 끝난 뒤, 첫 조작 전에 발동한다.
+        yield return introduction;
+        yield return null;
+        yield return roomEvent;
+        playersTurn = true;
     }
 
     private IEnumerator FadeOutLevelImage()
@@ -758,7 +795,7 @@ public class GameManager : MonoBehaviour
         Destroy(UiCanvas);
         Destroy(gameObject);
 
-        SceneManager.LoadScene("SampleScene");
+        ShopRoom.LoadNextFloor();
     }
 
     /// <summary>
@@ -849,11 +886,11 @@ public class GameManager : MonoBehaviour
     ///
     /// 레벨업이 지금 유일한 사용처지만, 앞으로 붙을 대화도 이 길을 쓴다.
     /// </summary>
-    public IEnumerator Announce(string message)
+    public IEnumerator Announce(string message, IEnumerator presentation = null, bool waitForConfirmation = true)
     {
         InputFocus.Give(InputOwner.Prompt);
 
-        yield return messageBox.ShowImportant(message);
+        yield return messageBox.ShowImportant(message, presentation, waitForConfirmation);
 
         InputFocus.ReturnToPlayer();
     }
@@ -864,7 +901,7 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public void DescendImmediately()
     {
-        SceneManager.LoadScene("SampleScene");
+        ShopRoom.LoadNextFloor();
     }
 
     // ── 함정 효과 ──────────────────────────────────────────────────────────
@@ -1045,11 +1082,17 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>이번 턴에 스스로 행동할 수 있는가(잠·마비 따위에 걸리지 않았는가).</summary>
-    public static bool PlayerCanAct => ConditionRules.CanAct(ActiveEffects);
+    /// <remarks>
+    /// 걸린 것이 없으면 목록을 만들지 않고 곧바로 답한다. 이 물음은 입력을 기다리는
+    /// 동안 <b>매 프레임</b> 오는데(Player.HandleNormalInput), ActiveEffects 는
+    /// 부를 때마다 열거자를 새로 만든다. 대부분의 시간은 아무것도 안 걸려 있다.
+    /// </remarks>
+    public static bool PlayerCanAct
+        => Conditions.IsEmpty || ConditionRules.CanAct(ActiveEffects);
 
     /// <summary>가려던 방향이 제멋대로 바뀌는가(혼란).</summary>
     public static bool PlayerDirectionScrambled
-        => ConditionRules.ScramblesDirection(ActiveEffects);
+        => !Conditions.IsEmpty && ConditionRules.ScramblesDirection(ActiveEffects);
 
     /// <summary>한 턴이 지났다. 남은 턴을 줄이고 풀린 것을 알린다.</summary>
     internal void TickConditions()
@@ -1061,9 +1104,6 @@ public class GameManager : MonoBehaviour
                 ShowText(MessageCatalog.Format(GameMessage.ConditionEnded, definition.Name));
         }
     }
-
-    /// <summary>함정 문구를 읽을 틈. 층이 넘어가기 전에 이만큼 기다린다.</summary>
-    private const float TrapMessagePause = 1f;
 
     /// <summary>계단 위에서 아래층으로 내려갈지 묻는다.</summary>
     public IEnumerator PromptDescend()
@@ -1077,7 +1117,7 @@ public class GameManager : MonoBehaviour
         InputFocus.ReturnToPlayer();
 
         if (answer.Value)
-            SceneManager.LoadScene("SampleScene");
+            ShopRoom.LoadNextFloor();
     }
 
     /// <summary>
@@ -1204,7 +1244,7 @@ public class GameManager : MonoBehaviour
         {
             if (partner == null || !partner.gameObject.activeInHierarchy) continue;
 
-            if (Vector2.Distance(partner.transform.position, position) < 0.1f)
+            if (GridUtil.SameCell(partner.transform.position, position))
                 return partner;
         }
         return null;

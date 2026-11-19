@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../Common.props" />
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>8.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Check/Check.csproj" />
+    <Compile Include="$(ProjectRoot)Assets/Editor/DungeonGenerationVerification.cs" />
+    <Compile Include="$(ProjectRoot)Assets/Editor/UiCameraVerification.cs" />
+    <Compile Include="$(ProjectRoot)Assets/Editor/ShopVerification.cs" />
+    <Compile Include="$(ProjectRoot)Assets/Editor/ShopPlayVerification.cs" />
+    <Reference Include="$(UnityManaged)/*.dll" />
+    <Reference Include="UnityEngine.UI"><HintPath>$(UnityScriptAssemblies)/UnityEngine.UI.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

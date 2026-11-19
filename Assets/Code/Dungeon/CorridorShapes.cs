@@ -1,23 +1,46 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// 통로가 그릴 수 있는 모양들. <b>어떤 모양을 고를지는 여기서 정하지 않는다</b> —
-/// 좌표를 받아 칸 목록을 만들어 줄 뿐이다.
-///
-/// 고르는 일(어디서 꺾을지 굴리고, 점수를 매겨 견주는 것)은 CorridorCarver 가 한다.
-/// 그래서 이 모양들은 무작위도 타일맵도 모르고, Unity 없이 그대로 확인할 수 있다.
-///
-/// ── 세 가지 모양 ──────────────────────────────────────────────────
-///   ㄱ자   - 한 번 꺾는다. 가장 짧지만 꺾이는 곳이 문에 붙어 답답하다
-///   ㄹ자   - 두 번 꺾는다. 양쪽 문에서 모두 곧게 뻗는다
-///
-/// 옆으로 크게 벗어났다 돌아오는 '우회' 모양도 있었는데 지웠다. 통로가 길어지면서
-/// 방 벽을 뚫고 폭 2칸이 되는 곳도 늘어, 층이 어지러워지고 진행이 막히기까지 했다
-/// (CorridorCarver 주석). 꺾는 자리를 두 문 사이에서 옮기는 것만으로도 모양은 충분히 달라진다.
-/// </summary>
+/// <summary>ㄱ자·ㄹ자·계단형·우회형의 칸 경로. 선택과 장애물 검사는 CorridorRouting이 맡는다.</summary>
 public static class CorridorShapes
 {
+    /// <summary>짧은 ㄱ자 여러 개를 이어 계단처럼 전진한다.</summary>
+    public static List<Vector3Int> Stair(Vector3Int from, Vector3Int to, bool horizontalFirst, int sections)
+    {
+        var path = new List<Vector3Int>();
+        var cursor = from;
+        sections = Mathf.Clamp(sections, 2, 4);
+        for (int i = 1; i <= sections; i++)
+        {
+            var next = new Vector3Int(from.x + (to.x - from.x) * i / sections,
+                from.y + (to.y - from.y) * i / sections, 0);
+            path.AddRange(L(cursor, next, horizontalFirst));
+            cursor = next;
+        }
+        return path;
+    }
+
+    /// <summary>문에서 전진한 뒤 옆으로 돌아오는 네 번 굽은 우회로. offset의 부호가 우회 방향이다.</summary>
+    public static List<Vector3Int> Detour(Vector3Int from, Vector3Int to, bool horizontal, int offset)
+    {
+        if (!horizontal)
+        {
+            var swapped = Detour(new Vector3Int(from.y, from.x, 0), new Vector3Int(to.y, to.x, 0), true, offset);
+            for (int i = 0; i < swapped.Count; i++) swapped[i] = new Vector3Int(swapped[i].y, swapped[i].x, 0);
+            return swapped;
+        }
+        int direction = to.x >= from.x ? 1 : -1;
+        int stub = Mathf.Min(3, Mathf.Abs(to.x - from.x) / 3);
+        int side = offset > 0 ? Mathf.Max(from.y, to.y) + offset : Mathf.Min(from.y, to.y) + offset;
+        var points = new[] { from, new Vector3Int(from.x + direction * stub, from.y, 0),
+            new Vector3Int(from.x + direction * stub, side, 0),
+            new Vector3Int(to.x - direction * stub, side, 0),
+            new Vector3Int(to.x - direction * stub, to.y, 0), to };
+        var path = new List<Vector3Int>();
+        for (int i = 1; i < points.Length; i++) AppendLine(path, points[i - 1], points[i]);
+        return path;
+    }
+
     /// <summary>한 번 꺾는다. corner 가 두 문 중 하나에 딱 붙는다.</summary>
     public static List<Vector3Int> L(Vector3Int from, Vector3Int to, bool horizontalFirst)
     {

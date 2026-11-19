@@ -52,7 +52,7 @@ public class RoomLayoutBuilder
     }
 
     /// <summary>방을 배치해 layout 에 채워 넣는다.</summary>
-    public void Build(DungeonLayout layout, int stage)
+    public void Build(DungeonLayout layout, int stage, float? monsterHouseChance = null)
     {
         int target = TargetRoomCount(stage);
         int budget = target * AttemptsPerRoom;
@@ -65,7 +65,7 @@ public class RoomLayoutBuilder
             layout.Rooms.Add(candidate);
         }
 
-        AssignSpecialRooms(layout, stage);
+        AssignSpecialRooms(layout, stage, Random.value, Random.Range(0, Mathf.Max(1, layout.Rooms.Count)), monsterHouseChance);
     }
 
     private RoomInfo CreateRandomRoom()
@@ -91,36 +91,25 @@ public class RoomLayoutBuilder
         return true;
     }
 
-    /// <summary>
-    /// 보물방과 몬스터 하우스를 확률적으로 넣는다.
-    /// 층이 깊어질수록 자주 나오되, 매 층 나오지는 않도록 상한을 둔다.
-    /// 첫 번째 방은 플레이어가 시작할 수 있으므로 건드리지 않는다.
-    /// </summary>
-    private static void AssignSpecialRooms(DungeonLayout layout, int stage)
+    /// <summary>기존 두 특수방 중 하나라도 나올 확률을 하나의 하우스 확률로 합친다.</summary>
+    public static float MonsterHouseChance(int stage)
     {
-        if (layout.Rooms.Count < 3) return;
-
         float treasureChance = Mathf.Min(0.25f + stage * 0.01f, 0.45f);
-        float monsterHouseChance = Mathf.Min(0.08f + stage * 0.015f, 0.35f);
-
-        if (Random.value < treasureChance)
-            MarkRandomNormalRoom(layout, RoomKind.Treasure);
-
-        if (Random.value < monsterHouseChance)
-            MarkRandomNormalRoom(layout, RoomKind.MonsterHouse);
+        float oldHouseChance = Mathf.Min(0.08f + stage * 0.015f, 0.35f);
+        return 1f - (1f - treasureChance) * (1f - oldHouseChance);
     }
 
-    private static void MarkRandomNormalRoom(DungeonLayout layout, RoomKind kind)
+    /// <summary>아이템이 많은 특수방은 하우스 하나로 통합. 시작 방도 후보에 포함한다.</summary>
+    public static void AssignSpecialRooms(DungeonLayout layout, int stage, float roll, int candidate, float? chance = null)
     {
-        // 0번 방은 후보에서 제외한다.
-        int start = Random.Range(1, layout.Rooms.Count);
-
-        for (int offset = 0; offset < layout.Rooms.Count - 1; offset++)
+        float probability = Mathf.Clamp01(chance ?? MonsterHouseChance(stage));
+        if (layout.Rooms.Count < 3 || probability <= 0f || (probability < 1f && roll >= probability)) return;
+        int start = Mathf.Clamp(candidate, 0, layout.Rooms.Count - 1);
+        for (int offset = 0; offset < layout.Rooms.Count; offset++)
         {
-            int index = 1 + (start - 1 + offset) % (layout.Rooms.Count - 1);
+            int index = (start + offset) % layout.Rooms.Count;
             if (layout.Rooms[index].Kind != RoomKind.Normal) continue;
-
-            layout.Rooms[index].Kind = kind;
+            layout.Rooms[index].Kind = RoomKind.MonsterHouse;
             return;
         }
     }

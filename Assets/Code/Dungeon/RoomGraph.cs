@@ -8,8 +8,8 @@ using UnityEngine;
 /// 연결은 보장됐지만 언제나 순수한 트리라 순환 경로가 없었고,
 /// 막다른 방에 몰리면 반드시 왔던 길로만 되돌아가야 했다.
 ///
-/// 여기서는 먼저 최소 신장 트리로 모든 방을 확실히 잇고(연결성 보장),
-/// 그 위에 가까운 방들 사이의 간선을 몇 개 더 얹어 루프를 만든다.
+/// 거리와 무작위 선호도로 신장 트리를 만들어 모든 방을 확실히 잇고,
+/// 그 위에 추가 간선을 얹어 우회할 수 있는 루프를 만든다.
 /// </summary>
 public static class RoomGraph
 {
@@ -29,14 +29,14 @@ public static class RoomGraph
     /// <summary>층이 깊어질수록 우회로가 늘어난다.</summary>
     public static int ExtraLoopsForStage(int stage) => 1 + stage / 4;
 
-    public static List<Edge> Plan(DungeonLayout layout, int extraLoops)
+    public static List<Edge> Plan(DungeonLayout layout, int extraLoops, System.Random random = null)
     {
         var result = new List<Edge>();
         int count = layout.Rooms.Count;
         if (count < 2) return result;
 
         // 가까운 방 쌍부터 살펴본다.
-        var candidates = new List<(int distance, int a, int b)>();
+        var candidates = new List<(double distance, int a, int b)>();
         for (int i = 0; i < count; i++)
         {
             for (int j = i + 1; j < count; j++)
@@ -44,7 +44,9 @@ public static class RoomGraph
                 Vector3Int ci = layout.Rooms[i].Center;
                 Vector3Int cj = layout.Rooms[j].Center;
                 int distance = Mathf.Abs(ci.x - cj.x) + Mathf.Abs(ci.y - cj.y);
-                candidates.Add((distance, i, j));
+                // 가까운 방을 선호하되 매번 같은 이웃만 잇지 않는다. 신장 트리의 연결 보장은 그대로다.
+                double priority = random == null ? distance : distance * (0.6 + random.NextDouble() * 1.2);
+                candidates.Add((priority, i, j));
             }
         }
         candidates.Sort((l, r) => l.distance.CompareTo(r.distance));
@@ -52,7 +54,7 @@ public static class RoomGraph
         var groups = new UnionFind(count);
         var leftover = new List<Edge>();
 
-        foreach ((int _, int a, int b) in candidates)
+        foreach ((double _, int a, int b) in candidates)
         {
             if (groups.Union(a, b))
                 result.Add(new Edge(a, b));   // 트리를 이루는 간선
@@ -60,9 +62,13 @@ public static class RoomGraph
                 leftover.Add(new Edge(a, b)); // 이미 이어진 쌍 → 루프 후보
         }
 
-        // 가장 가까운 것부터 몇 개만 루프로 추가한다.
-        for (int i = 0; i < extraLoops && i < leftover.Count; i++)
-            result.Add(leftover[i]);
+        // 가까운 후보 묶음에서 추가 연결을 섞는다. 무작위를 주지 않으면 기존 순서를 유지한다.
+        for (int i = 0; i < extraLoops && leftover.Count > 0; i++)
+        {
+            int index = random == null ? 0 : random.Next(System.Math.Min(leftover.Count, count));
+            result.Add(leftover[index]);
+            leftover.RemoveAt(index);
+        }
 
         return result;
     }

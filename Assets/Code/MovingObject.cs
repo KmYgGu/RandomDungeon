@@ -114,7 +114,7 @@ public abstract class MovingObject : MonoBehaviour
     ///
     /// 적은 Move() 대신 이것을 직접 쓴다 — 이유는 Enemy.TryMoveAlong 참고.
     /// </summary>
-    protected void MoveTo(Vector2 end)
+    protected virtual void MoveTo(Vector2 end)
     {
         if (GameManager.FastForward)
         {

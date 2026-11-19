@@ -68,7 +68,7 @@ public class ForcedMoves
         InputFocus.ReturnToPlayer();
         GameManager.ForcedMoveRunning = false;
 
-        SceneManager.LoadScene("SampleScene");
+        ShopRoom.LoadNextFloor();
     }
 
     /// <summary>

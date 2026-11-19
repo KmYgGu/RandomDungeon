@@ -152,7 +152,7 @@ public class MessageBoxView
     /// 뜨자마자는 넘길 수 없다. 공격하느라 A 를 연달아 누르던 손이 그대로
     /// 지워 버리기 때문이다. 글 길이만큼 기다린 뒤에야 A 가 먹는다.
     /// </summary>
-    public IEnumerator ShowImportant(string message)
+    public IEnumerator ShowImportant(string message, IEnumerator presentation = null, bool waitForConfirmation = true)
     {
         ShowingImportant = true;
         KeepOpen = true;
@@ -162,6 +162,20 @@ public class MessageBoxView
         if (label != null) label.text = message;
         LastShown = message;
         log?.Add(message);
+
+        // 메시지를 먼저 표시하고, 연출 중에는 확인 표시를 숨긴다.
+        SetContinuePromptVisible(false);
+        if (presentation != null) yield return presentation;
+
+        if (!waitForConfirmation)
+        {
+            // 연출 중 누른 버튼이 조작 복귀 직후의 공격으로 새지 않게 한다.
+            GameInput.ConsumeAction();
+            ShowingImportant = false;
+            KeepOpen = false;
+            RestartAutoHide();
+            yield break;
+        }
 
         // 읽을 시간. 이 동안의 A 는 넘기는 데 쓰이지 않는다.
         // 표시도 아직 띄우지 않는다 — 눌러도 안 넘어가는데 누르라고 하면 거짓말이 된다.
@@ -326,6 +340,16 @@ public class MessageBoxView
     {
         KeepOpen = true;
         bool yesSelected = true;
+
+        // 물음을 띄운 그 A 가 곧바로 답이 되어서는 안 된다. <b>손을 한 번 뗀 뒤에
+        // 새로 누른 것만</b> 답으로 받는다(ConfirmationPress).
+        //
+        // 예전에는 물음마다 막는 방법이 달랐다 — 동료에게 말을 걸 때는 입력을
+        // 소비하고 한 프레임을 넘겼고, 상점만 이 장치를 켰고, 계단 앞에서는
+        // 아무것도 하지 않았다. 부르는 쪽이 저마다 챙겨야 하면 새 물음이 생길
+        // 때마다 빠뜨리므로 물음 쪽이 언제나 지킨다.
+        var confirmation = new ConfirmationPress();
+
         while (true)
         {
             if (GameInput.MenuStep < 0) yesSelected = true;
@@ -333,7 +357,7 @@ public class MessageBoxView
 
             selectList.ShowList(yesSelected ? "> 예\n  아니오" : "  예\n> 아니오", PanelView.SideAnchor);
 
-            if (GameInput.ActionPressed) break;
+            if (confirmation.Accept(GameInput.ActionHeld, GameInput.ActionPressed)) break;
 
             yield return null;
         }

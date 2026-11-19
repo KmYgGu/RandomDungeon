@@ -13,30 +13,19 @@ using UnityEngine;
 ///
 /// 지금은 그 흐름이 TryMoveAlong() 한 곳에 있다.
 ///
-/// 한 턴은 바깥(GameManager.MoveEnemies)이 세 단계로 나누어 돌린다.
+/// 한 턴은 바깥(TurnLoop)이 세 단계로 나누어 돌린다.
 ///   DecideAttack() - 무엇을 할지 정한다. 모든 적이 먼저 정한 뒤에야 움직인다.
 ///   TakeStep()     - 이동. 기다림이 없어 마릿수와 무관하게 같은 프레임에 끝난다.
 ///   AttackTurn()   - 공격. 연출이 있어 한 마리씩 차례로 돈다.
+///
+/// ── 판단은 EnemyPlan 이 한다 ──────────────────────────────────────
+/// 어떤 모드로 다닐지(추격 · 순찰 · 확인 · 집결), 누구를 때릴지는 EnemyPlan 이
+/// 정한다. 이 클래스는 씬에서 사실을 모아 넘기고(EnemySight) 답대로 움직인다.
+/// 동료(PartnerPlan · Partner)와 같은 나눔이고, 그래서 규칙은 Unity 없이 검사된다.
+/// 모드 자체(EnemyMode)도 그쪽으로 옮겼다.
 /// </summary>
 public class Enemy : MovingObject
 {
-    public enum EnemyMode
-    {
-        /// <summary>플레이어를 쫓는다.</summary>
-        Chase,
-        /// <summary>통로 쪽 출구를 향해 돌아다닌다.</summary>
-        Patrol,
-    }
-
-    /// <summary>
-    /// 이 걸음 수보다 멀어지면 추격을 포기한다.
-    /// 직선 거리가 아니라 실제로 걸어가야 하는 걸음 수다.
-    /// </summary>
-    private const int ChaseGiveUpDistance = 20;
-
-    /// <summary>같은 칸으로 볼 거리.</summary>
-    private const float SameCellThreshold = 0.1f;
-
     /// <summary>치명타가 나올 확률과 그 배율.</summary>
     private const float CriticalChance = 0.1f;
     private const double CriticalMultiplier = 1.8;
@@ -67,6 +56,111 @@ public class Enemy : MovingObject
     /// <summary>순찰 목표에 도착해서, 이제 아무 데나 헤매는 중인가.</summary>
     private bool isWandering;
 
+    /// <summary>
+    /// 지금 순찰 목표까지의 걸음 수 지도. <b>내 것이 아니라 빌려 온 것이다</b> —
+    /// 같은 문을 향하는 적들이 한 장을 함께 본다(RouteCache). 읽기만 한다.
+    /// </summary>
+    private ChaseMap patrolRoute;
+
+    /// <summary>이번 턴에 막혀 있던 출구들. 턴마다 비워 다시 쓴다.</summary>
+    private readonly HashSet<Vector2> blockedExits = new HashSet<Vector2>();
+
+    /// <summary>배회할 때 네 방향을 섞어 담는 자리. 턴마다 새로 만들지 않는다.</summary>
+    private readonly Vector2[] shuffledDirections = new Vector2[CardinalDirections.Length];
+    private readonly EnemyCuriosity curiosity = new EnemyCuriosity();
+    private readonly EnemySleep sleep = new EnemySleep();
+    private MonsterHouseRally rally;
+    private readonly EnemyDropPlan drops = new EnemyDropPlan();
+    public bool IsSleeping => sleep.IsSleeping;
+
+    public void ConfigureSpawnSleep(float sleepRoll, float typeRoll)
+        => sleep.OnSpawn(sleepRoll, typeRoll);
+
+    // ── 상인 ────────────────────────────────────────────────────────────────
+    //
+    // 상인은 따로 만든 것이 아니라 <b>처음에 중립인 적</b>이다. Merchant 컴포넌트가
+    // 붙어 있고 아직 돌아서지 않은 동안에는 싸우지 않고 가게를 본다. 돌아서면
+    // 아래 값이 바뀌는 것만으로 평범한 적의 추격이 그대로 돈다.
+
+    /// <summary>상인이면 그 컴포넌트. 보통 적이면 null.</summary>
+    public Merchant Merchant { get; private set; }
+
+    /// <summary>
+    /// 싸움의 상대인가. 중립인 상인만 아니다.
+    ///
+    /// 조준 · 달리기 정지 · 동료의 표적 · 근접 공격이 전부 이것을 본다. 그래서
+    /// 중립 상인은 옆에 있어도 달리기가 멈추지 않고, 때리면 말을 건다(Damaged).
+    /// </summary>
+    public bool IsCombatTarget => Merchant == null || Merchant.Hostile;
+
+    public void ConfigureMerchant(Merchant merchant) => Merchant = merchant;
+
+    /// <summary>상인이 제 길(문 · 계산대)을 따라 한 걸음 걷는다. 판정은 적의 이동과 같다.</summary>
+    public bool StepAlong(IEnumerable<Vector2> directions)
+        => TryMoveAlong(directions, rememberPath: false);
+
+    /// <summary>
+    /// 걷지 않고 곧바로 그 자리에 선다. 상인이 문에서 비켜설 때 쓴다.
+    ///
+    /// 몸(Rigidbody2D)과 겉(transform)을 함께 옮기고 물리에 바로 알린다. 한쪽만
+    /// 옮기면 다음 물리 갱신에서 몸이 겉을 옛 자리로 끌고 돌아간다.
+    /// </summary>
+    public void Relocate(Vector3 position)
+    {
+        if (rb2D == null) rb2D = GetComponent<Rigidbody2D>();
+
+        rb2D.position = position;
+        transform.position = position;
+        Physics2D.SyncTransforms();
+    }
+
+    /// <summary>층의 타일맵 · 방 · 문 목록을 다시 받고, 적 목록에 없으면 올린다.</summary>
+    public void RefreshFloorBindings()
+    {
+        tilemap = GameManager.FloorTilemap;
+        roomdata = GameManager.instance.MapMake.RoomData;
+        connectionPoints = GameManager.instance.MapMake.edgePoints;
+
+        if (!GameManager.instance.enemies.Contains(this))
+            GameManager.instance.AddEnemyToList(this);
+    }
+
+    /// <summary>상인이 돌아섰다. 하던 일을 전부 놓고 추격으로 넘어간다.</summary>
+    public void WakeMerchant()
+    {
+        sleep.Wake();
+        WakeFromSleep();
+        rally = null;
+        currentMode = EnemyMode.Chase;
+    }
+
+    /// <summary>멀리서 날아온 것에 맞았다고 상점에 알린다. 상인이 아니면 아무 일도 없다.</summary>
+    public void NotifyRangedHit(bool fromEnemy = false)
+    {
+        if (Merchant != null && Merchant.Shop != null) Merchant.Shop.RangedHit(fromEnemy);
+    }
+
+    public void ReceiveHouseAlarm(MonsterHouseRally destination)
+    {
+        if (ThisHp <= 0 || destination == null || Merchant != null) return;
+        sleep.Wake();
+        WakeFromSleep();
+        rally = destination;
+        currentMode = EnemyMode.Rally;
+    }
+
+    private void WakeFromSleep()
+    {
+        curiosity.Stop();
+        currentMode = EnemyMode.Patrol;
+        ResetPatrol(startWandering: false);
+    }
+
+    private void WakeOnDamage(int damage)
+    {
+        if (sleep.TryWakeOnDamage(damage)) WakeFromSleep();
+    }
+
     /// <summary>같은 자리를 맴돌지 않도록 이미 지나온 칸을 기억한다.</summary>
     private readonly List<Vector2> visited = new List<Vector2>();
 
@@ -87,6 +181,8 @@ public class Enemy : MovingObject
     {
         get
         {
+            if (rally != null && !rally.HasArrived(GameManager.FloorTilemap.WorldToCell(transform.position)) &&
+                rally.TryGetDistance(transform.position, out int rallySteps)) return rallySteps;
             if (GameManager.Chase.IsReady
                 && GameManager.Chase.TryGetDistance(transform.position, out int steps))
                 return steps;
@@ -97,16 +193,29 @@ public class Enemy : MovingObject
 
     protected override void Start()
     {
-        var dungeon = FindObjectOfType<RandomDung>();
-        connectionPoints = dungeon.edgePoints;
-        roomdata = dungeon.RoomData;
+        // 층을 만든 쪽은 GameManager 가 이미 들고 있다. 예전에는 적마다 씬 전체를
+        // 뒤져 찾았는데(FindObjectOfType), 몬스터 하우스처럼 여럿이 한꺼번에 생기는
+        // 순간에 그 탐색이 마릿수만큼 겹쳤다.
+        RandomDung dungeon = GameManager.instance.MapMake;
+        if (dungeon != null)
+        {
+            connectionPoints = dungeon.edgePoints;
+            roomdata = dungeon.RoomData;
+        }
 
         GameManager.instance.AddEnemyToList(this);
 
         // base.Start() 가 자식에서 SpriteRenderer 를 찾아 두므로 그 뒤에 입힌다.
         base.Start();
 
-        if (description != null) SpriteApplier.Apply(gameObject, description.sprite);
+        if (description != null)
+        {
+            SpriteApplier.Apply(gameObject, description.sprite);
+            if (description.directionalSprites != null && description.directionalSprites.Length == 8)
+                directionsprites = description.directionalSprites;
+        }
+        FaceDirection(Vector2.down);
+        if (IsSleeping) gameObject.AddComponent<EnemySleepIndicator>().Bind(this);
     }
 
     private Vector2 PlayerPosition => GameManager.instance.Player.transform.position;
@@ -125,10 +234,62 @@ public class Enemy : MovingObject
     /// </summary>
     public bool DecideAttack()
     {
+        // 중립인 상인은 아무도 때리지 않는다.
+        if (!IsCombatTarget)
+        {
+            target = null;
+            partnerTarget = null;
+            return false;
+        }
+
+        if (IsSleeping)
+        {
+            target = null;
+            partnerTarget = null;
+            if (!GameManager.Chase.TryGetDistance(transform.position, out int steps) ||
+                !sleep.TryWakeNearby(steps, Random.value)) return false;
+            WakeFromSleep();
+        }
         UpdateMode();
 
         target = PickTarget();
+        if (target != null) FaceDirection((Vector2)target.transform.position - (Vector2)transform.position);
         return target != null;
+    }
+
+    /// <summary>
+    /// 판단에 넘길 사실들을 씬에서 모은다. 무엇을 할지는 여기서 정하지 않는다.
+    /// </summary>
+    private EnemySight LookAround()
+    {
+        bool rallying = rally != null;
+
+        var sight = new EnemySight
+        {
+            Current = currentMode,
+            HostileMerchant = Merchant != null && Merchant.Hostile,
+            Rallying = rallying,
+            RallyArrived = rallying
+                && rally.HasArrived(GameManager.FloorTilemap.WorldToCell(transform.position)),
+            ChaseMapReady = GameManager.Chase.IsReady,
+            StepsToPlayer = -1,
+            StraightDistance = Vector2.Distance(PlayerPosition, transform.position),
+        };
+
+        // 돌아선 상인이나 덜 온 집결은 아래를 보지 않고 정해진다. 그때는 방을
+        // 뒤지거나 걸음 수를 묻는 일을 건너뛴다.
+        if (sight.HostileMerchant || (rallying && !sight.RallyArrived)) return sight;
+
+        // 같은 방 안에 있거나 바로 옆에 붙어 있으면 발견한 것으로 본다.
+        Rect currentRoom = FindRoomContaining(transform.position);
+        sight.PlayerVisible =
+            (currentRoom != Rect.zero && currentRoom.Contains(PlayerPosition)) || IsPlayerAdjacent();
+
+        if (sight.ChaseMapReady
+            && GameManager.Chase.TryGetDistance(transform.position, out int steps))
+            sight.StepsToPlayer = steps;
+
+        return sight;
     }
 
     /// <summary>이번 턴에 때릴 상대. 플레이어면 partnerTarget 이 null 이다.</summary>
@@ -136,45 +297,27 @@ public class Enemy : MovingObject
     private Partner partnerTarget;
 
     /// <summary>
-    /// 붙어 있는 것들 중 누구를 때릴지 고른다. 아무도 없으면 null.
-    ///
-    /// ── 지금은 반반이다 ───────────────────────────────────────────────
-    /// 둘 다 붙어 있으면 <b>절반의 확률</b>로 고른다. 원래는 적 성향이 갈라야 할
-    /// 자리다 — 여성을 노리는 적, 공격력이 높은 쪽을 노리는 적, 물건을 많이 든
-    /// 쪽을 노리는 적처럼. 그런 성향은 시트에 열을 하나 두고 코드가 아는 목록을
-    /// 고르게 하면 된다(EquipAbility 와 같은 방식). 지금은 그 목록이 없으므로
-    /// 치우치지 않는 반반으로 둔다.
-    ///
-    /// 반반이 중요한 이유가 있다. 늘 플레이어만 때리면 동료는 맞지 않는 벽이 되어
-    /// 데리고 다니는 것이 무조건 이득이 되고, 늘 동료만 때리면 동료가 순식간에
-    /// 녹아 데리고 다닐 수가 없다.
+    /// 붙어 있는 것들 중 누구를 때릴지. 아무도 없으면 null.
+    /// 누구를 고르는지는 EnemyPlan.PickTarget 이 정한다(둘 다 붙어 있으면 반반).
     /// </summary>
     private GameObject PickTarget()
     {
         partnerTarget = null;
 
-        bool playerAdjacent = IsPlayerAdjacent();
         Partner partner = AdjacentPartner();
 
-        if (playerAdjacent && partner != null)
+        switch (EnemyPlan.PickTarget(IsPlayerAdjacent(), partner != null, Random.value))
         {
-            if (Random.value < 0.5f)
-            {
+            case EnemyTarget.Player:
+                return GameManager.instance.Player;
+
+            case EnemyTarget.Partner:
                 partnerTarget = partner;
                 return partner.gameObject;
-            }
-            return GameManager.instance.Player;
+
+            default:
+                return null;
         }
-
-        if (playerAdjacent) return GameManager.instance.Player;
-
-        if (partner != null)
-        {
-            partnerTarget = partner;
-            return partner.gameObject;
-        }
-
-        return null;
     }
 
     /// <summary>붙어 있는 동료 하나. 없으면 null. 판정은 플레이어와 똑같다.</summary>
@@ -216,8 +359,14 @@ public class Enemy : MovingObject
     /// </summary>
     public void TakeStep()
     {
-        if (currentMode == EnemyMode.Chase)
+        if (!IsCombatTarget) { Merchant.Step(); return; }
+        if (IsSleeping) return;
+        if (currentMode == EnemyMode.Rally && rally != null)
+            TryMoveAlong(rally.StepsToward(transform.position), rememberPath: false);
+        else if (currentMode == EnemyMode.Chase)
             StepTowardPlayer();
+        else if (currentMode == EnemyMode.Curious)
+            StepCurious();
         else
             StepPatrol();
     }
@@ -230,6 +379,7 @@ public class Enemy : MovingObject
     /// </summary>
     public IEnumerator AttackTurn()
     {
+        if (IsSleeping) yield break;
         // 빨리감기 중에는 연출을 건너뛰고 피해만 준다.
         if (GameManager.FastForward)
         {
@@ -240,42 +390,35 @@ public class Enemy : MovingObject
         yield return AttackPlayer();
     }
 
-    /// <summary>플레이어가 보이는지에 따라 Chase / Patrol 을 오간다.</summary>
+    /// <summary>
+    /// 이번 턴의 모드를 정하고 그 뒷일을 한다. 규칙은 EnemyPlan.NextMode 에 있다.
+    /// </summary>
     private void UpdateMode()
     {
-        Vector2 playerPosition = PlayerPosition;
+        EnemyModeChange change = EnemyPlan.NextMode(LookAround());
 
-        // 같은 방 안에 있으면 발견한 것으로 본다.
-        Rect currentRoom = FindRoomContaining(transform.position);
-        if (currentRoom != Rect.zero && currentRoom.Contains(playerPosition))
-        {
-            currentMode = EnemyMode.Chase;
-            return;
-        }
+        currentMode = change.Mode;
 
-        if (currentMode != EnemyMode.Chase) return;
+        if (change.LeaveRally) rally = null;
+        if (change.StopCuriosity) curiosity.Stop();
+        if (change.ResetPatrol) ResetPatrol(startWandering: false);
+    }
 
-        // 너무 멀어지거나 아예 갈 수 없게 되면 포기하고 다시 순찰한다.
-        //
-        // 직선 거리가 아니라 '실제로 몇 걸음인지'로 판단한다. 벽 하나를 사이에 두고
-        // 직선으로는 두 칸이지만 돌아가려면 서른 걸음인 경우가 흔한데,
-        // 직선 거리로 재면 그런 상대를 영영 포기하지 않고 벽만 밀게 된다.
-        if (GameManager.Chase.IsReady)
-        {
-            bool reachable = GameManager.Chase.TryGetDistance(transform.position, out int steps);
-            if (!reachable || steps > ChaseGiveUpDistance)
-            {
-                currentMode = EnemyMode.Patrol;
-                isPatrolTargetSet = false;
-            }
-            return;
-        }
+    /// <summary>실제 이동 방향에 맞춰 외형을 갱신한다.</summary>
+    protected override void MoveTo(Vector2 end)
+    {
+        FaceDirection(end - (Vector2)transform.position);
+        base.MoveTo(end);
+    }
 
-        if (Vector2.Distance(playerPosition, transform.position) > ChaseGiveUpDistance)
-        {
-            currentMode = EnemyMode.Patrol;
-            isPatrolTargetSet = false;
-        }
+    private void FaceDirection(Vector2 direction)
+    {
+        if (direction == Vector2.zero || spriteRenderer == null) return;
+        Vector2 facing = new Vector2(Mathf.Clamp(Mathf.RoundToInt(direction.x), -1, 1),
+            Mathf.Clamp(Mathf.RoundToInt(direction.y), -1, 1));
+        int index = GetDirectionInfo(facing).spriteIndex;
+        if (directionsprites == null || index >= directionsprites.Length || directionsprites[index] == null) return;
+        spriteRenderer.sprite = directionsprites[index];
     }
 
     /// <summary>
@@ -286,49 +429,94 @@ public class Enemy : MovingObject
     /// </summary>
     private void StepTowardPlayer()
     {
-        if (GameManager.Chase.IsReady &&
-            TryMoveAlong(GameManager.Chase.StepsToward(transform.position), rememberPath: false))
+        if (GameManager.Chase.IsReady)
+        {
+            // 길이 다른 생물에게 막혔으면 기다린다. 반대 방향으로 새지 않는다.
+            TryMoveAlong(GameManager.Chase.StepsToward(transform.position), rememberPath: false);
             return;
-
-        // 지도를 못 쓰는 상황(플레이어가 물 건너편 등)의 최후 수단.
+        }
         TryMoveAlong(MoveIntent.Toward(DirectionToward(PlayerPosition)), rememberPath: false);
+    }
+
+    private void StepCurious()
+    {
+        if (curiosity.TryStep(direction =>
+            TryMoveAlong(new[] { direction }, rememberPath: false))) return;
+
+        currentMode = EnemyMode.Patrol;
+        ResetPatrol(startWandering: false);
+        // 이번 턴은 확인으로 끝낸다. 순찰 이동은 다음 턴부터 한다.
+    }
+
+    /// <summary>원거리 피해를 줄 때만 발사 당시 위치를 함께 넘긴다. 충돌·함정에는 넘기지 않는다.</summary>
+    private void NoticeRangedDamage(int damage, Vector2? attackOrigin)
+    {
+        if (!attackOrigin.HasValue || GameManager.FloorTilemap == null) return;
+        var floor = GameManager.FloorTilemap;
+        if (!curiosity.TryStart(currentMode == EnemyMode.Patrol, damage, ThisHp,
+            floor.WorldToCell(transform.position), floor.WorldToCell(attackOrigin.Value))) return;
+        ResetPatrol(startWandering: false);
+        currentMode = EnemyMode.Curious;
     }
 
     private void StepPatrol()
     {
-        if (!isPatrolTargetSet)
+        // Rigidbody 이동은 다음 물리 갱신에 반영된다. 다음 턴 시작 위치로 도착을 확인한다.
+        if (isPatrolTargetSet && HasReachedPatrolTarget())
+            isWandering = true;
+
+        if (!isWandering && !isPatrolTargetSet)
         {
-            patrolTarget = PickPatrolTarget();
-            isPatrolTargetSet = true;
+            if (PatrolPlan.TryPickTarget(transform.position, roomdata, connectionPoints,
+                visited, Random.value, out patrolTarget))
+            {
+                isPatrolTargetSet = true;
+                patrolRoute = RouteTo(patrolTarget);
+            }
+            else isWandering = true;
         }
 
-        // 목표에 이미 도착했으면 무작위로 헤맨다.
-        if (isWandering)
+        // 이번 턴에 막힌 출구는 기억 초기화로도 다시 뽑지 않는다.
+        blockedExits.Clear();
+        while (!isWandering)
         {
-            if (TryMoveAlong(Shuffled(CardinalDirections), rememberPath: true))
+            Vector2 origin = transform.position;
+            if (patrolRoute != null &&
+                patrolRoute.TryGetDistance(origin, out int remaining) && remaining > 0 &&
+                TryMoveAlong(patrolRoute.StepsToward(origin, allowSideways: false), rememberPath: false))
             {
-                // 방 안으로 들어왔으면 새 목표를 다시 고른다.
-                if (FindRoomContaining(transform.position) != Rect.zero)
-                    ResetPatrol(startWandering: false);
+                if (!visited.Contains(origin)) visited.Add(origin);
+                return;
+            }
+
+            blockedExits.Add(patrolTarget);
+            if (PatrolPlan.TryPickTarget(origin, roomdata, connectionPoints,
+                visited, Random.value, out patrolTarget, blockedExits))
+            {
+                isPatrolTargetSet = true;
+                patrolRoute = RouteTo(patrolTarget);
             }
             else
             {
+                // 다른 출구도 없거나 모두 막혔다. 방 안에서 비켜 갈 칸을 찾는다.
                 ResetPatrol(startWandering: true);
             }
-            return;
         }
 
-        Vector2 preferred = DirectionToward(patrolTarget);
-        if (!TryMoveAlong(MoveIntent.Toward(preferred), rememberPath: true))
+        // 통로에서는 지나온 칸을 피한다. 막다른 곳이면 기억을 비우고 곧바로 되돌아간다.
+        if (!TryMoveAlong(Shuffled(CardinalDirections), rememberPath: true))
         {
-            // 어느 쪽으로도 못 갔다. 기억을 지우고 헤매기로 전환한다.
-            ResetPatrol(startWandering: true);
-            return;
+            visited.Clear();
+            TryMoveAlong(Shuffled(CardinalDirections), rememberPath: true);
         }
-
-        if (HasReachedPatrolTarget())
-            isWandering = true;
     }
+
+    /// <summary>
+    /// 그 문까지의 지도를 빌려 온다. 같은 문을 고른 다른 적이 이미 만들어 두었으면
+    /// 그것을 그대로 받는다(RouteCache 주석).
+    /// </summary>
+    private static ChaseMap RouteTo(Vector3 target)
+        => GameManager.PatrolRoutes.To(new TilemapWalkableGrid(GameManager.FloorTilemap), target);
 
     private void ResetPatrol(bool startWandering)
     {
@@ -349,6 +537,7 @@ public class Enemy : MovingObject
 
         foreach (Vector2 direction in directions)
         {
+            if (direction == Vector2.zero) continue;
             Vector2 destination = origin + direction;
             if (!CanOccupy(destination, direction, rememberPath)) continue;
 
@@ -384,7 +573,18 @@ public class Enemy : MovingObject
             // 플레이어 쪽에서 PlayerPosition 을 갱신해야 했던 것과 같은 종류다.
             if (neutral != null) GameManager.instance.enemyPositions.Add(origin);
 
-            if (rememberPath) visited.Add(destination);
+            if (rememberPath)
+            {
+                // 출발 칸도 기억해야 바로 뒤로 되돌아가는 왕복을 막는다.
+                if (!visited.Contains(origin)) visited.Add(origin);
+                if (!visited.Contains(destination)) visited.Add(destination);
+                if (FindRoomContaining(destination) != Rect.zero)
+                {
+                    ResetPatrol(startWandering: false);
+                    // 방금 들어온 문보다 다른 문을 먼저 고른다. 외길 방은 다시 나갈 수 있다.
+                    visited.Add(origin);
+                }
+            }
 
             return true;
         }
@@ -420,7 +620,7 @@ public class Enemy : MovingObject
             if (partner == null || !partner.gameObject.activeInHierarchy) continue;
             if (partner.Joined != joined) continue;
 
-            if (Vector2.Distance(partner.transform.position, destination) < SameCellThreshold)
+            if (GridUtil.SameCell(partner.transform.position, destination))
                 return partner;
         }
         return null;
@@ -443,10 +643,16 @@ public class Enemy : MovingObject
     /// 벽 하나만 앞을 막아도 적이 그대로 멈춰 서던 원인이다.
     /// </summary>
 
-    private static IEnumerable<Vector2> Shuffled(Vector2[] source)
+    /// <summary>
+    /// 네 방향을 섞어 돌려준다. <b>돌려받은 것은 곧바로 다 써야 한다</b> —
+    /// 담는 자리가 하나라 다음에 부르면 덮인다.
+    /// </summary>
+    private Vector2[] Shuffled(Vector2[] source)
     {
-        var list = new List<Vector2>(source);
-        for (int i = list.Count - 1; i > 0; i--)
+        Vector2[] list = shuffledDirections;
+        System.Array.Copy(source, list, list.Length);
+
+        for (int i = list.Length - 1; i > 0; i--)
         {
             int j = Random.Range(0, i + 1);
             (list[i], list[j]) = (list[j], list[i]);
@@ -476,33 +682,13 @@ public class Enemy : MovingObject
 
     // ── 순찰 목표 고르기 ────────────────────────────────────────────────────
 
-    /// <summary>
-    /// 지금 있는 방에서 나갈 수 있는 통로 지점 중 하나를 무작위로 고른다.
-    /// 이미 지나온 곳만 남았으면 기억을 지우고 다시 고른다.
-    /// </summary>
-    /// <summary>
-    /// 다음에 가 볼 문. 고를 수 없으면 제자리를 돌려준다(다음 턴에 다시 시도).
-    ///
-    /// 고르는 규칙은 <b>동료와 함께 쓰는 PatrolPlan</b> 이 갖고 있다. 예전에는
-    /// 여기 있었고 동료 쪽에 같은 것을 따로 만들었더니, 한쪽만 고쳤을 때
-    /// 적과 동료가 다르게 돌아다니게 됐다.
-    /// </summary>
-    private Vector3 PickPatrolTarget()
-    {
-        return PatrolPlan.TryPickTarget(
-            transform.position, roomdata, connectionPoints, visited,
-            Random.value, out Vector3 target)
-            ? target
-            : transform.position;
-    }
-
-
-
+    /// <remarks>
+    /// 칸으로 견준다. 예전에는 거리가 <b>정확히 0</b> 인지를 물었는데
+    /// (Mathf.Approximately), 물리가 옮긴 좌표에 오차가 조금이라도 남으면
+    /// 문 위에 서 있으면서도 영영 도착하지 못한 것이 된다.
+    /// </remarks>
     private bool HasReachedPatrolTarget()
-    {
-        return Mathf.Approximately(
-            Vector2.Distance(transform.position, patrolTarget), 0f);
-    }
+        => GridUtil.SameCell(transform.position, patrolTarget);
 
     private Rect FindRoomContaining(Vector2 position)
         => PatrolPlan.RoomContaining(roomdata, position);
@@ -519,7 +705,7 @@ public class Enemy : MovingObject
         {
             Vector2 checkPosition = origin + direction;
 
-            if (Vector2.Distance(playerPosition, checkPosition) >= SameCellThreshold) continue;
+            if (!GridUtil.SameCell(playerPosition, checkPosition)) continue;
             if (IsBlockedByTile(checkPosition)) continue;
 
             bool isDiagonal = Mathf.Abs(direction.x) > 0 && Mathf.Abs(direction.y) > 0;
@@ -594,7 +780,7 @@ public class Enemy : MovingObject
     {
         foreach (Vector2 reserved in GameManager.instance.enemyPositions)
         {
-            if (Vector2.Distance(position, reserved) < SameCellThreshold)
+            if (GridUtil.SameCell(position, reserved))
                 return true;
         }
 
@@ -607,7 +793,7 @@ public class Enemy : MovingObject
             // 뒤따르는 적이 그 칸을 이어받지 못해 한 칸씩 벌어진다.
             if (other.MovedThisTurn) continue;
 
-            if (Vector2.Distance(position, other.transform.position) < SameCellThreshold)
+            if (GridUtil.SameCell(position, other.transform.position))
                 return true;
         }
 
@@ -621,7 +807,7 @@ public class Enemy : MovingObject
     /// 여기서 직접 본다 — 빠뜨리면 적이 플레이어를 밟고 지나간다.
     /// </summary>
     private bool IsPlayerAt(Vector2 position)
-        => Vector2.Distance(position, PlayerPosition) < SameCellThreshold;
+        => GridUtil.SameCell(position, PlayerPosition);
 
     public override void SetStats(int hp, int attack, int defenseValue)
     {
@@ -637,10 +823,13 @@ public class Enemy : MovingObject
     /// 회피도 치명타도 없이 그대로 들어오는 피해. 던진 물건이나 원거리 공격용.
     /// 방어력만큼은 줄어들되 최소 1은 들어간다.
     /// </summary>
-    public void TakeDirectDamage(int amount)
+    public void TakeDirectDamage(int amount, Vector2? attackOrigin = null, bool fromEnemy = false)
     {
         int damage = Mathf.Max(amount - defense, 1);
+        if (attackOrigin.HasValue) NotifyRangedHit(fromEnemy);
         ThisHp -= damage;
+        WakeOnDamage(damage);
+        NoticeRangedDamage(damage, attackOrigin);
 
         GameManager.instance.ShowMessage(GameMessage.ThrownItemHitEnemy, DisplayName, damage);
         CheckDead();
@@ -652,12 +841,15 @@ public class Enemy : MovingObject
     /// TakeDirectDamage 는 이름과 달리 방어력을 빼고 있어서(amount - defense),
     /// "방어력 무시" 가 필요한 곳에는 쓸 수 없다. 돈을 던져 맞히는 것이 그 경우다.
     /// </summary>
-    public void TakeTrueDamage(int amount)
+    public void TakeTrueDamage(int amount, Vector2? attackOrigin = null, bool fromEnemy = false)
     {
         int damage = Mathf.Max(amount, 0);
         if (damage <= 0) return;
 
+        if (attackOrigin.HasValue) NotifyRangedHit(fromEnemy);
         ThisHp -= damage;
+        WakeOnDamage(damage);
+        NoticeRangedDamage(damage, attackOrigin);
 
         GameManager.instance.ShowMessage(GameMessage.ThrownItemHitEnemy, DisplayName, damage);
         CheckDead();
@@ -670,12 +862,15 @@ public class Enemy : MovingObject
     /// 경험치까지 오면 데리고 다니는 것이 무조건 이득이 되어 고를 이유가 사라진다.
     /// 시리즈에서도 동료의 대가는 그것이다.
     /// </summary>
-    public void TakeDamageFromPartner(int attack, Partner attacker)
+    public void TakeDamageFromPartner(int attack, Partner attacker, Vector2? rangedOrigin = null)
     {
-        if (attacker == null) return;
+        if (attacker == null || (!IsCombatTarget && !rangedOrigin.HasValue)) return;
+        if (rangedOrigin.HasValue) NotifyRangedHit();
 
         int damage = Mathf.Max(1, attack - defense);
         ThisHp -= damage;
+        WakeOnDamage(damage);
+        NoticeRangedDamage(damage, rangedOrigin);
 
         GameManager.instance.ShowMessage(
             GameMessage.PartnerHitEnemy, attacker.DisplayName, damage);
@@ -683,7 +878,7 @@ public class Enemy : MovingObject
         // 싸우는 소리. 플레이어를 놓친 동료가 이걸 듣고 찾아온다.
         GameManager.ReportNoise(transform.position);
 
-        if (ThisHp > 0) return;
+        if (ThisHp > 0 || !RecordDefeat()) return;
 
         // 경험치는 때린 동료에게만 간다. 플레이어는 한 점도 받지 않는다.
         int gained = GameManager.Party.AddExp(attacker.Id, ExpReward);
@@ -694,10 +889,24 @@ public class Enemy : MovingObject
         if (gained > 0)
             GameManager.instance.ShowMessage(GameMessage.PartnerLeveledUp, attacker.DisplayName);
 
-        // 경험치는 동료만 받지만 도감은 누가 잡았든 똑같이 센다.
-        RecordDefeat();
+        LeaveFloor();
+    }
 
+    /// <summary>
+    /// 쓰러진 뒤 층에서 물러난다. <b>쓰러지는 길이 어느 쪽이든 여기로 온다.</b>
+    ///
+    /// 예전에는 플레이어가 잡으면 꺼 두기만 하고(SetActive) 동료가 잡으면 지웠다.
+    /// 꺼 둔 쪽은 층이 끝날 때까지 씬에 남아 쌓였고, 두 길의 뒷정리가 달라서
+    /// 한쪽만 고치면 어긋날 자리였다.
+    ///
+    /// 끄는 것과 지우는 것을 함께 한다. Destroy 는 이 프레임이 끝나야 실제로
+    /// 지워지므로, 그 사이에 목록을 도는 쪽(턴 흐름 · 조준 · 미니맵)이 "꺼진 것은
+    /// 건너뛴다" 는 지금의 검사로 그대로 걸러 낼 수 있게 먼저 꺼 둔다.
+    /// </summary>
+    private void LeaveFloor()
+    {
         GameManager.instance.RemoveEnemyList(this);
+        gameObject.SetActive(false);
         Destroy(gameObject);
     }
 
@@ -731,7 +940,7 @@ public class Enemy : MovingObject
     /// 정의가 아직 연결되지 않은 프리팹이 있을 수 있어 GameObject 이름으로
     /// 물러선다. 전부 연결하고 나면 이 뒷길은 지워도 된다.
     /// </summary>
-    public string DisplayName => description != null
+    public string DisplayName => Merchant != null ? "상인" : description != null
         ? description.DisplayName
         : gameObject.name.Replace("(Clone)", string.Empty);
 
@@ -786,11 +995,19 @@ public class Enemy : MovingObject
     /// 화살표가 아이템 쪽으로 홱 도는 순간 "저건 적이구나" 를 알게 되기 때문이다.
     /// 숨는 적을 두는 의미가 사라지므로 조준 대상에서 뺀다.
     /// </summary>
-    public bool CanBeAimedAt => !IsDisguised && !IsInvisible;
+    public bool CanBeAimedAt => IsCombatTarget && !IsDisguised && !IsInvisible;
 
     /// <summary>플레이어에게 맞았을 때.</summary>
     public void Damaged(int playerAttack)
     {
+        // 중립인 상인을 때리면 공격이 아니라 말을 건 것이 된다. 상인은 처음에
+        // 중립 상태의 적이라, 돌아서게 하는 길은 훔치기와 멀리서 맞히기뿐이다.
+        if (!IsCombatTarget)
+        {
+            GameManager.instance.StartCoroutine(Merchant.Shop.Talk());
+            return;
+        }
+
         if (Random.value >= HitChance)
         {
             // 연달아 빗나간 횟수를 센다. 맞히면 아래에서 끊긴다.
@@ -809,6 +1026,7 @@ public class Enemy : MovingObject
             damage = (int)System.Math.Round(damage * CriticalMultiplier);
 
         ThisHp -= damage;
+        WakeOnDamage(damage);
         GameManager.ReportRecord(RecordStat.BiggestHitDealt, damage);
 
         GameManager.instance.ShowMessage(
@@ -826,12 +1044,11 @@ public class Enemy : MovingObject
 
         gameObject.name = gameObject.name.Replace("(Clone)", string.Empty);
 
-        RecordDefeat();
+        if (!RecordDefeat()) return;
 
-        GameManager.instance.RemoveEnemyList(this);
         GameManager.instance.RewardForKill(DisplayName, ExpReward);
 
-        gameObject.SetActive(false);
+        LeaveFloor();
     }
 
     /// <summary>
@@ -847,9 +1064,16 @@ public class Enemy : MovingObject
     /// 때렸거나 던진 것에 맞은 경우고, 동료가 잡은 경우는 TakeDamageFromPartner 가
     /// 목록에서 빼고 오브젝트를 바로 지워 버려서 이곳을 지나지 않는다.
     /// </summary>
-    private void RecordDefeat()
+    private bool RecordDefeat()
     {
+        ItemDropRate rate = description != null ? description.Rate : ItemDropRate.Medium;
+        if (!drops.TryResolveDeath(ThisHp, rate, Random.value, out bool drop)) return false;
         GameManager.RecordEnemyDefeat(MonsterId);
         GameManager.ReportRecord(RecordStat.EnemiesDefeated);
+        // 상인이 쓰러지면 가게의 물건은 주인이 없어진다. 상인은 물건을 떨구지 않는다.
+        if (Merchant != null) Merchant.Shop.ReleaseStock();
+        if (drop && Merchant == null && GameManager.instance.MapMake != null)
+            GameManager.instance.MapMake.DropEnemyItem(transform.position);
+        return true;
     }
 }

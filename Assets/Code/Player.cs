@@ -9,9 +9,6 @@ using UnityEngine.Tilemaps;
 /// </summary>
 public class Player : MovingObject
 {
-    /// <summary>공격이 상대에게 닿았다고 볼 거리.</summary>
-    private const float HitRadius = 0.1f;
-
     /// <summary>공격이 맞을 확률(10%는 빗나감).</summary>
     private const float HitChance = 0.9f;
 
@@ -106,15 +103,56 @@ public class Player : MovingObject
     /// <summary>방 안쪽 영역들. 달리기가 방 경계를 넘었는지 판단하는 데 쓴다.</summary>
     private List<Rect> roomRects = new List<Rect>();
 
+    // 판정 좌표는 기존 격자를 유지하고 표시만 보간한다.
+    // 공격/워프가 Sprite 로컬 좌표를 바꿔도 걷기 표시와 충돌하지 않도록 부모를 분리한다.
+    private Transform walkPresentation;
+    private Vector3 walkStart;
+    private Vector3 walkEnd;
+    private float walkStartedAt;
+    private bool walkingPresentation;
+
+    protected override void MoveTo(Vector2 end)
+    {
+        walkStart = walkingPresentation && walkPresentation != null
+            ? walkPresentation.position : transform.position;
+        walkEnd = new Vector3(end.x, end.y, transform.position.z);
+        walkStartedAt = Time.time;
+        walkingPresentation = !GameManager.FastForward && mode != Mode.Running;
+        base.MoveTo(end);
+    }
+
+    /// <summary>카메라의 LateUpdate 에서 표시와 카메라에 같은 좌표를 적용한다.</summary>
+    public Vector3 UpdateWalkPresentation()
+    {
+        if (walkPresentation == null) return transform.position;
+        if (!walkingPresentation)
+        {
+            walkPresentation.localPosition = Vector3.zero;
+            return transform.position;
+        }
+        bool immediate = GameManager.FastForward || mode == Mode.Running ||
+            mode == Mode.Acting || !InputFocus.PlayerHasFocus;
+        float progress = CameraFollowMotion.Progress(Time.time - walkStartedAt, moveTime, immediate);
+        if (progress >= 1f)
+        {
+            walkingPresentation = false;
+            walkPresentation.localPosition = Vector3.zero;
+            return transform.position;
+        }
+        Vector3 displayed = Vector3.Lerp(walkStart, walkEnd, progress);
+        walkPresentation.position = displayed;
+        return displayed;
+    }
     protected override void Start()
     {
         ArrowTransform = GameObject.Find("2arrow");
-        ArrowTransform.SetActive(false);
+        if (ArrowTransform != null) ArrowTransform.SetActive(false);
+        else Debug.LogWarning("조준 화살표(2arrow)를 씬에서 찾지 못했습니다. 조준 방향이 화면에 보이지 않습니다.", this);
 
         directionInput.DiagonalGraceSeconds = diagonalGraceSeconds;
 
         // 적과 같은 방식으로 이번 층의 방 정보를 받아 둔다.
-        RandomDung dungeon = FindObjectOfType<RandomDung>();
+        RandomDung dungeon = GameManager.instance.MapMake;
         if (dungeon != null) roomRects = dungeon.RoomData;
 
         // 서 있는 자리를 알려 둔다. 이 값은 이동할 때만 갱신되므로, 층에 들어와
@@ -137,6 +175,9 @@ public class Player : MovingObject
         GameManager.InteractionHandled = true;
 
         base.Start();
+        walkPresentation = new GameObject("WalkPresentation").transform;
+        walkPresentation.SetParent(transform, false);
+        childTransform.SetParent(walkPresentation, false);
     }
 
     private void Update()
@@ -313,6 +354,14 @@ public class Player : MovingObject
     /// </summary>
     private bool TryTalkToPartner(Vector2 destination)
     {
+        // 중립인 상인도 말을 거는 상대다. 돌아선 뒤에는 적이라 아래 공격으로 넘어간다.
+        Merchant merchant = Merchant.At(destination);
+        if (merchant != null && !merchant.Hostile)
+        {
+            StartCoroutine(merchant.Shop.Talk());
+            return true;
+        }
+
         Partner partner = GameManager.instance.PartnerAt(destination);
         if (partner == null) return false;
 
@@ -514,22 +563,7 @@ public class Player : MovingObject
             // 정체를 숨긴 적은 바로 옆에 있어도 겨누지 않는다. 2순위와 같은 규칙이다.
             if (!enemy.CanBeAimedAt) continue;
 
-            Vector2 offset = (Vector2)enemy.transform.position - origin;
-            if (Mathf.Abs(offset.x) > 1.1f || Mathf.Abs(offset.y) > 1.1f) continue;
-
-            var step = new Vector2(Mathf.Round(offset.x), Mathf.Round(offset.y));
-            if (step == Vector2.zero) continue;
-
-            float score = Vector2.Dot(step.normalized, facing.normalized);
-
-            // 점수가 같을 때 직선 쪽을 먼저 겨눈다.
-            bool cardinal = step.x == 0f || step.y == 0f;
-            if (cardinal) score += 0.01f;
-
-            if (score <= bestScore) continue;
-
-            bestScore = score;
-            direction = step;
+            ConsiderAdjacent(enemy.transform.position, origin, facing, ref bestScore, ref direction);
         }
 
         return direction != Vector2.zero;
@@ -555,25 +589,40 @@ public class Player : MovingObject
         {
             if (partner == null || !partner.gameObject.activeInHierarchy) continue;
 
-            Vector2 offset = (Vector2)partner.transform.position - origin;
-            if (Mathf.Abs(offset.x) > 1.1f || Mathf.Abs(offset.y) > 1.1f) continue;
-
-            var step = new Vector2(Mathf.Round(offset.x), Mathf.Round(offset.y));
-            if (step == Vector2.zero) continue;
-
-            float score = Vector2.Dot(step.normalized, facing.normalized);
-
-            // 점수가 같을 때 직선 쪽을 먼저 겨눈다.
-            bool cardinal = step.x == 0f || step.y == 0f;
-            if (cardinal) score += 0.01f;
-
-            if (score <= bestScore) continue;
-
-            bestScore = score;
-            direction = step;
+            ConsiderAdjacent(partner.transform.position, origin, facing, ref bestScore, ref direction);
         }
 
         return direction != Vector2.zero;
+    }
+
+    /// <summary>
+    /// 바로 옆(대각선 포함)에 선 것 하나를 조준 후보로 견줘 본다.
+    /// 지금까지의 후보보다 나으면 bestScore 와 direction 을 갈아 끼운다.
+    ///
+    /// 적과 동료가 <b>같은 기준</b>으로 뽑혀야 해서 한 곳에 둔다. 따로 두었을 때는
+    /// 서른 줄이 글자까지 같았고, 한쪽만 고치면 "적은 직선 우선인데 동료는 아닌"
+    /// 식으로 조용히 갈라질 자리였다.
+    /// </summary>
+    private static void ConsiderAdjacent(
+        Vector2 position, Vector2 origin, Vector2 facing,
+        ref float bestScore, ref Vector2 direction)
+    {
+        Vector2 offset = position - origin;
+        if (Mathf.Abs(offset.x) > 1.1f || Mathf.Abs(offset.y) > 1.1f) return;
+
+        var step = new Vector2(Mathf.Round(offset.x), Mathf.Round(offset.y));
+        if (step == Vector2.zero) return;
+
+        float score = Vector2.Dot(step.normalized, facing.normalized);
+
+        // 점수가 같을 때 직선 쪽을 먼저 겨눈다.
+        bool cardinal = step.x == 0f || step.y == 0f;
+        if (cardinal) score += 0.01f;
+
+        if (score <= bestScore) return;
+
+        bestScore = score;
+        direction = step;
     }
 
     /// <summary>
@@ -680,17 +729,46 @@ public class Player : MovingObject
     /// </summary>
     private void EnterMode(Mode next)
     {
-        mode = next;
-        ArrowTransform.SetActive(next == Mode.Aiming);
+        SetMode(next);
 
         // 상태를 바꾼 그 프레임의 눌린 방향키가 새 상태로 새어 들어가지 않게 한다.
         directionInput.RequireRelease();
     }
 
     /// <summary>
+    /// 상태 값과 조준 화살표를 <b>함께</b> 바꾼다. mode 에 직접 대입하는 곳은 여기뿐이다.
+    ///
+    /// 예전에는 공격 · 워프 · 날려지기 · 함정 몸짓이 저마다 mode 에 직접 대입했다.
+    /// 그러면 화살표가 따라 바뀌지 않아서, 조준 중에 워프 함정을 밟으면 상태는
+    /// 평소인데 화살표만 떠 있는 채로 남았다.
+    ///
+    /// EnterMode 와 다른 점은 <b>방향키를 잠그지 않는다</b>는 것 하나다. 연출이
+    /// 끝나고 돌아올 때까지 잠그면, 방향키를 누른 채 공격을 섞어 가며 걷는
+    /// 손이 공격할 때마다 키를 뗐다 눌러야 한다.
+    ///
+    /// Acting 은 잠깐 지나가는 상태라 화살표를 건드리지 않는다. 조준한 채 휘두르는
+    /// 동안에는 화살표가 그대로 보이다가, 끝나고 돌아오는 상태에 맞춰 정리된다.
+    /// </summary>
+    private void SetMode(Mode next)
+    {
+        mode = next;
+
+        if (next != Mode.Acting && ArrowTransform != null)
+            ArrowTransform.SetActive(next == Mode.Aiming);
+    }
+
+    /// <summary>
     /// 달리기를 멈춘다. 모든 정지 경로가 이 메서드 하나를 지나가므로,
     /// "멈출 때 반드시 해야 하는 일" 을 빠뜨릴 수 없다.
     /// </summary>
+    public void InterruptForMonsterHouse() => InterruptForRoomEvent();
+
+    public void InterruptForRoomEvent()
+    {
+        StopRun(RunStopReason.UiInterrupted);
+        GameManager.FastForward = false;
+    }
+
     private void StopRun(RunStopReason reason)
     {
         if (!runner.IsRunning) return;
@@ -715,6 +793,8 @@ public class Player : MovingObject
     private bool TryStep(Vector2 direction)
     {
         Vector2 destination = (Vector2)transform.position + direction;
+        // 값을 안 치른 물건을 든 채로는 상점을 나서지 못한다.
+        if (ShopRoom.BlocksWalk(transform.position, destination)) return false;
 
         if (!Move(direction, out _)) return false;
 
@@ -915,7 +995,7 @@ public class Player : MovingObject
     {
         foreach (Enemy enemy in GameManager.instance.enemies)
         {
-            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
+            if (enemy == null || !enemy.gameObject.activeInHierarchy || !enemy.IsCombatTarget) continue;
             if (Vector2.Distance(enemy.transform.position, here) <= EnemyAlertRadius)
                 return true;
         }
@@ -929,7 +1009,7 @@ public class Player : MovingObject
 
         spriteRenderer.sprite = directionsprites[spriteIndex];
 
-        if (mode == Mode.Aiming)
+        if (mode == Mode.Aiming && ArrowTransform != null)
             ArrowTransform.transform.localEulerAngles = new Vector3(0f, 0f, zRotation);
     }
 
@@ -964,7 +1044,7 @@ public class Player : MovingObject
 
         // 연출이 끝날 때까지 조작을 잠근다.
         // 잠그지 않으면 공격 도중에 이동까지 해서 한 턴에 두 행동을 하게 된다.
-        mode = Mode.Acting;
+        SetMode(Mode.Acting);
 
         StartCoroutine(AttackRoutine(direction, TileRules.CanReachWithMelee(tilemap, origin, direction)));
     }
@@ -988,8 +1068,7 @@ public class Player : MovingObject
         // 조작을 돌려주고 턴을 넘긴다.
         // 공격하고 나면 조준은 자동으로 풀린다. 한 번 쏘고 나서 커서가 계속
         // 떠 있으면 다음 이동 입력이 방향 전환으로 먹혀 답답하기 때문이다.
-        mode = Mode.Normal;
-        ArrowTransform.SetActive(false);
+        SetMode(Mode.Normal);
 
         GameManager.instance.EndPlayerTurn();
     }
@@ -1016,10 +1095,12 @@ public class Player : MovingObject
     /// </summary>
     public IEnumerator WarpTo(Vector3 destination)
     {
-        mode = Mode.Acting;
-
         // 달리던 중에 밟았을 수 있다. 그대로 두면 내려오자마자 마저 달린다.
+        //
+        // <b>멈추는 것이 먼저다.</b> StopRun 은 평소 상태로 되돌리므로, 순서가
+        // 반대면 방금 건 잠금이 곧바로 풀려 연출 도중에 조작이 살아난다.
         StopRun(RunStopReason.SteppedOnObject);
+        SetMode(Mode.Acting);
 
         yield return MoveSpriteVertically(
             WarpRiseHeight, WarpRiseSeconds, spin: true);
@@ -1027,11 +1108,14 @@ public class Player : MovingObject
         // 달리기가 세어 두는 칸은 맞춰 줄 필요가 없다.
         // AutoRunner.Begin 이 다음 달리기를 시작할 때 그 자리를 다시 받는다.
         transform.position = destination;
+        var mainCamera = Camera.main;
+        var follow = mainCamera != null ? mainCamera.GetComponent<CameraPlayer>() : null;
+        if (follow != null) follow.SnapTo(destination);
 
         yield return MoveSpriteVertically(
             0f, WarpFallSeconds, spin: false);
 
-        mode = Mode.Normal;
+        SetMode(Mode.Normal);
     }
 
     /// <summary>
@@ -1096,8 +1180,8 @@ public class Player : MovingObject
     /// </summary>
     public IEnumerator BlowTo(Vector3 destination, Vector2 direction, bool hitWall)
     {
-        mode = Mode.Acting;
-        StopRun(RunStopReason.SteppedOnObject);
+        StopRun(RunStopReason.SteppedOnObject);   // 멈춘 뒤에 잠근다(WarpTo 주석).
+        SetMode(Mode.Acting);
 
         Vector3 start = transform.position;
         int cells = Mathf.RoundToInt(Vector3.Distance(start, destination));
@@ -1116,7 +1200,7 @@ public class Player : MovingObject
 
         if (hitWall) yield return BounceOffWall(direction.normalized);
 
-        mode = Mode.Normal;
+        SetMode(Mode.Normal);
     }
 
     /// <summary>벽 쪽으로 한 번 밀려 들어갔다가 제자리로 돌아온다.</summary>
@@ -1182,7 +1266,9 @@ public class Player : MovingObject
         // 달리다 밟았으면 연출을 건너뛴다. 달리기가 멈추지 않게 하는 규칙이다.
         if (GameManager.FastForward) yield break;
 
-        mode = Mode.Acting;
+        // 제자리에서 도는 것뿐이라 조준은 그대로 둔다. 돌고 나면 겨누던 채로 돌아온다.
+        bool wasAiming = mode == Mode.Aiming;
+        SetMode(Mode.Acting);
 
         for (float t = 0f; t < seconds; t += Time.deltaTime)
         {
@@ -1192,8 +1278,8 @@ public class Player : MovingObject
         }
 
         // 돌기를 끝냈으면 원래 바라보던 쪽으로 되돌린다.
+        SetMode(wasAiming ? Mode.Aiming : Mode.Normal);
         FaceDirection(GameManager.LookDirection);
-        mode = Mode.Normal;
     }
 
     // ── 구멍에 빠지기 ──────────────────────────────────────────────────────
@@ -1213,10 +1299,9 @@ public class Player : MovingObject
     /// </summary>
     public IEnumerator FallThroughFloor()
     {
-        mode = Mode.Acting;
-
         // 달려서 밟았을 수 있다. 그대로 두면 떨어지는 중에도 걸음이 이어진다.
-        StopRun(RunStopReason.SteppedOnObject);
+        StopRun(RunStopReason.SteppedOnObject);   // 멈춘 뒤에 잠근다(WarpTo 주석).
+        SetMode(Mode.Acting);
 
         if (!GameManager.FastForward && FallSeconds > 0f)
         {
@@ -1243,14 +1328,17 @@ public class Player : MovingObject
         childTransform.localScale = spriteHomeScale;
         childTransform.localPosition = spriteHomePosition;
         childTransform.gameObject.SetActive(true);
-        mode = Mode.Normal;
+        SetMode(Mode.Normal);
     }
 
     private Enemy FindEnemyAt(Vector3 position)
     {
         foreach (Enemy enemy in GameManager.instance.enemies)
         {
-            if (Vector3.Distance(enemy.transform.position, position) < HitRadius)
+            // 쓰러진 적이 아직 목록에 남아 있을 수 있다. 다른 순회는 전부 이렇게 거른다.
+            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
+
+            if (GridUtil.SameCell(enemy.transform.position, position))
                 return enemy;
         }
         return null;
@@ -1318,7 +1406,7 @@ public class Player : MovingObject
                 // 방금 내가 놓은 것이면 집지 않는다.
                 if (other.gameObject == placedUnderFoot) break;
 
-                if (steppingWithoutTaking) StandOnWithoutTaking(other.gameObject);
+                if (steppingWithoutTaking || ShopGood.IsStock(other.gameObject)) StandOnWithoutTaking(other.gameObject);
                 else GameManager.instance.PickUpItem(other.gameObject);
                 break;
 
@@ -1370,7 +1458,7 @@ public class Player : MovingObject
     /// </summary>
     private void StandOnWithoutTaking(GameObject item)
     {
-        string itemName = item.name.Replace("(Clone)", string.Empty);
+        string itemName = ItemInstance.FullNameOf(item);
         GameManager.instance.ShowMessage(GameMessage.SteppedOnItem, itemName);
     }
 
@@ -1427,8 +1515,10 @@ public class Player : MovingObject
         FaceTowardAttacker(attackerPosition);
 
         int randomFactor = Random.Range(-3, 4);
+        // 장비가 아직 만들어지지 않았을 수 있다(GameManager.DefensePower 와 같은 대비).
+        Equipment gear = GameManager.Gear;
         int damage = GameManager.Stats.CalculateIncomingDamage(
-            enemyAttack, randomFactor, GameManager.Gear.DefenseBonus);
+            enemyAttack, randomFactor, gear != null ? gear.DefenseBonus : 0);
 
         // 치명타를 내는 적은 정해져 있다(Monster 시트의 critical 이 1 인 적).
         // 모든 적이 낸다면 맞는 쪽에서는 피해 폭이 넓은 것으로만 보여서,
@@ -1436,7 +1526,7 @@ public class Player : MovingObject
         //
         // 치명타를 무효로 만드는 장비가 있으면 평범한 공격이 된다.
         bool critical = dealsCritical && Random.Range(0, 100) < IncomingCriticalPercent;
-        if (critical && GameManager.Gear.Has(EquipAbility.NegateCritical))
+        if (critical && gear != null && gear.Has(EquipAbility.NegateCritical))
             critical = false;
 
         if (critical)

@@ -98,7 +98,15 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 64
   isSpecialState: 0
-  directionsprites: []
+  directionsprites:
+  - {fileID: 21300000, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
+  - {fileID: 21300002, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
+  - {fileID: 21300004, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
+  - {fileID: 21300006, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
+  - {fileID: 21300008, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
+  - {fileID: 21300010, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
+  - {fileID: 21300012, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
+  - {fileID: 21300014, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
   childTransform: {fileID: 0}
   spriteRenderer: {fileID: 0}
   roomdata: []
@@ -179,7 +187,7 @@ SpriteRenderer:
   m_SortingLayerID: -996489589
   m_SortingLayer: 5
   m_SortingOrder: 0
-  m_Sprite: {fileID: -4251768712096742070, guid: 2fb461f92e48ab343ab5157fccb80b94, type: 3}
+  m_Sprite: {fileID: 21300000, guid: ae1117b7ac024425969755d8bd3a6b7a, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_FlipX: 0
   m_FlipY: 0

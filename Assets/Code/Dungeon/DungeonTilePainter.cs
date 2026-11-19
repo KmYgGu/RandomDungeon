@@ -164,6 +164,8 @@ public class DungeonTilePainter
     }
 
     /// <summary>타일 칸의 중심 월드 좌표.</summary>
+    public Vector3Int WorldToCell(Vector3 world) => floorTilemap.WorldToCell(world);
+
     public Vector3 CellCenter(Vector3Int cellPosition) => GridUtil.CellCenter(floorTilemap, cellPosition);
 
     /// <summary>

@@ -52,7 +52,8 @@ public static class PatrolPlan
         IReadOnlyList<Vector3> exits,
         List<Vector2> visited,
         float roll,
-        out Vector3 target)
+        out Vector3 target,
+        ISet<Vector2> excluded = null)
     {
         target = default;
 
@@ -66,14 +67,14 @@ public static class PatrolPlan
             room.width + SearchMargin * 2,
             room.height + SearchMargin * 2);
 
-        List<Vector3> candidates = Collect(area, exits, visited);
+        List<Vector3> candidates = Collect(area, exits, visited, excluded);
 
         // 이 방의 문을 다 돌았다. 기억을 지우고 다시 돈다 — 그러지 않으면
         // 방에 갇힌 채 영영 목표를 못 고른다.
         if (candidates.Count == 0)
         {
             visited?.Clear();
-            candidates = Collect(area, exits, null);
+            candidates = Collect(area, exits, null, excluded);
         }
 
         if (candidates.Count == 0) return false;
@@ -84,7 +85,7 @@ public static class PatrolPlan
     }
 
     private static List<Vector3> Collect(
-        Rect area, IReadOnlyList<Vector3> exits, List<Vector2> visited)
+        Rect area, IReadOnlyList<Vector3> exits, List<Vector2> visited, ISet<Vector2> excluded)
     {
         var result = new List<Vector3>();
 
@@ -92,6 +93,7 @@ public static class PatrolPlan
         {
             var flat = new Vector2(point.x, point.y);
             if (!area.Contains(flat)) continue;
+            if (excluded != null && excluded.Contains(flat)) continue;
             if (visited != null && visited.Contains(flat)) continue;
 
             result.Add(point);

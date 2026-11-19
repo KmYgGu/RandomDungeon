@@ -21,9 +21,6 @@ public class Partner : MovingObject
     /// <summary>어느 동료인가. 프리팹에서 연결한다.</summary>
     public PartnerDescription description;
 
-    /// <summary>같은 칸으로 볼 거리.</summary>
-    private const float SameCellThreshold = 0.1f;
-
     /// <summary>공격이 맞을 확률(10%는 빗나감). 플레이어·적과 같은 값이다.</summary>
     private const float HitChance = 0.9f;
 
@@ -59,7 +56,8 @@ public class Partner : MovingObject
         GameManager.instance.AddPartner(this);
 
         // 방 목록은 층을 만든 쪽이 들고 있다. 적도 같은 것을 받아 쓴다.
-        RandomDung dungeon = FindObjectOfType<RandomDung>();
+        // 씬을 뒤지지 않고 GameManager 가 들고 있는 것을 받는다(Enemy.Start 주석).
+        RandomDung dungeon = GameManager.instance.MapMake;
         if (dungeon != null)
         {
             roomdata = dungeon.RoomData;
@@ -386,7 +384,7 @@ public class Partner : MovingObject
 
         foreach (Enemy enemy in GameManager.instance.enemies)
         {
-            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
+            if (enemy == null || !enemy.gameObject.activeInHierarchy || !enemy.IsCombatTarget) continue;
 
             Vector3Int cell = ToCell(enemy.transform.position);
 
@@ -407,9 +405,9 @@ public class Partner : MovingObject
 
         foreach (Enemy enemy in GameManager.instance.enemies)
         {
-            if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
+            if (enemy == null || !enemy.gameObject.activeInHierarchy || !enemy.IsCombatTarget) continue;
 
-            if (Vector2.Distance(enemy.transform.position, center) < SameCellThreshold)
+            if (GridUtil.SameCell(enemy.transform.position, center))
                 return enemy;
         }
 
@@ -433,13 +431,13 @@ public class Partner : MovingObject
         if (!CanMoveDiagonally(transform.position, center - transform.position)) return false;
 
         // 플레이어 자리. 동료가 밀고 들어가면 플레이어가 튕겨 나간다.
-        if (Vector2.Distance(GameManager.instance.PlayerPosition, center) < SameCellThreshold)
+        if (GridUtil.SameCell(GameManager.instance.PlayerPosition, center))
             return false;
 
         // 이번 턴에 누군가 찜한 칸(적·동료가 같은 목록을 쓴다).
         foreach (Vector2 reserved in GameManager.instance.enemyPositions)
         {
-            if (Vector2.Distance(center, reserved) < SameCellThreshold) return false;
+            if (GridUtil.SameCell(center, reserved)) return false;
         }
 
         // 아직 안 움직인 것들이 서 있는 자리. 이미 옮긴 것은 찜한 칸으로 표현된다.
@@ -448,7 +446,7 @@ public class Partner : MovingObject
             if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
             if (enemy.MovedThisTurn) continue;
 
-            if (Vector2.Distance(center, enemy.transform.position) < SameCellThreshold)
+            if (GridUtil.SameCell(center, enemy.transform.position))
                 return false;
         }
 
@@ -457,7 +455,7 @@ public class Partner : MovingObject
             if (other == null || other == this) continue;
             if (!other.gameObject.activeInHierarchy || other.MovedThisTurn) continue;
 
-            if (Vector2.Distance(center, other.transform.position) < SameCellThreshold)
+            if (GridUtil.SameCell(center, other.transform.position))
                 return false;
         }
 

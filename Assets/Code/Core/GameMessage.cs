@@ -140,6 +140,24 @@ public enum GameMessage
     ThrownItemHealedEnemy,
     /// <summary>능력치 아이템을 맞고 적이 강해졌다. name = 적 이름</summary>
     ThrownItemBuffedEnemy,
+    /// <summary>몬스터 하우스 최초 입장.</summary>
+    MonsterHouse,
+
+    ShopGreeting,
+    ShopBuyPrompt,
+    ShopSellPrompt,
+    ShopPaid,
+    ShopReturned,
+    ShopNoGold,
+    ShopSold,
+    ShopTheft,
+    ShopAngry,
+    ShopNoSpace,
+
+    ShopPayFirst,
+
+    ShopWelcome,
+
 }
 
 /// <summary>
@@ -159,6 +177,20 @@ public static class MessageCatalog
     {
         switch (message)
         {
+            case GameMessage.MonsterHouse:
+                return "몬스터 하우스다!";
+            case GameMessage.ShopPayFirst: return "상인에게 먼저 계산해 주세요.";
+            case GameMessage.ShopWelcome: return "어서 오세요! 상점에 오신 것을 환영합니다!";
+            case GameMessage.ShopGreeting: return $"어서 오세요. 상품을 직접 주운 뒤 저에게 계산해 주세요. 바닥에 놓은 물건은 매입도 합니다.";
+            case GameMessage.ShopBuyPrompt: return $"상품 대금 {amount}G입니다. 구매하시겠습니까?";
+            case GameMessage.ShopSellPrompt: return $"{name}의 매입가는 {amount}G입니다. 판매하시겠습니까?";
+            case GameMessage.ShopPaid: return $"{amount}G 받았습니다. 감사합니다! 길을 비켜드리겠습니다.";
+            case GameMessage.ShopReturned: return $"구매하지 않은 상품을 가방에서 꺼내 진열대로 돌려놓았다.";
+            case GameMessage.ShopNoGold: return $"돈이 부족합니다. 상품을 돌려받겠습니다.";
+            case GameMessage.ShopSold: return $"{amount}G에 매입했습니다. 이제 제 상품입니다.";
+            case GameMessage.ShopTheft: return $"도둑이다! 상품 값을 치르지 않고 도망치다니!";
+            case GameMessage.ShopAngry: return $"감히 상인을 공격하다니! 용서하지 않겠다!";
+            case GameMessage.ShopNoSpace: return $"상품을 돌려놓을 자리가 없습니다. 바닥을 비운 뒤 다시 말씀해 주세요.";
             case GameMessage.PlayerDamaged:
                 return $"플레이어에게 {amount}데미지!";
             case GameMessage.PlayerCriticallyDamaged:

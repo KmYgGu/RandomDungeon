@@ -7,64 +7,31 @@ using UnityEngine;
 /// 예전에는 GameManager 의 public static List&lt;Vector3&gt; GroundSetPositions 라서
 /// RandomDung, Player, GameManager 어디서든 Add / Remove 를 직접 호출했다.
 /// 어떤 규칙으로 채워지고 비워지는지 한 화면에서 볼 수 없었다.
+///
+/// ── 칸으로 기억한다 ───────────────────────────────────────────────
+/// 한때는 월드 좌표를 목록에 담고 "0.1 보다 가까우면 같은 자리" 로 견줬다.
+/// 묻는 것은 언제나 <b>이 칸에 무언가 있는가</b> 인데 답을 float 거리로 내고
+/// 있었고, 물을 때마다 목록을 통째로 훑었다. 미니맵과 상점이 이 물음을
+/// 물건마다 되풀이하므로 바닥에 놓인 것이 늘수록 제곱으로 느려졌다.
+///
+/// 지금은 칸 좌표의 집합이다. 받는 쪽은 여전히 월드 좌표라 부르는 곳은
+/// 그대로고, 안에서 한 번 칸으로 바꾼다(GridUtil.CellOf).
 /// </summary>
 public class GroundObjectRegistry
 {
-    // 같은 칸에 두 번 등록되지 않도록 비교 오차를 둔다.
-    private const float SamePositionThreshold = 0.1f;
+    private readonly HashSet<Vector3Int> cells = new HashSet<Vector3Int>();
 
-    /// <summary>
-    /// 위 오차의 제곱. 견줄 때는 이쪽을 쓴다.
-    ///
-    /// Vector3.Distance 는 제곱근을 뽑는데, "가까운가" 를 묻는 데에는 제곱근이
-    /// 필요 없다 — 제곱근은 커지는 순서를 바꾸지 않으므로 양쪽을 제곱한 채로
-    /// 견줘도 답이 같다. 목록을 통째로 훑는 자리라(Add 가 매번 Contains 를 부른다)
-    /// 비교 한 번마다 제곱근이 하나씩 붙어 있었다.
-    ///
-    /// 실제로 들어오는 자리는 칸 중심이라 서로 같거나 한 칸(1.0) 넘게 떨어져
-    /// 있고, 경계인 0.1 근처에 놓이는 일이 없다. 부동소수 반올림이 답을 가를
-    /// 여지가 없는 이유다.
-    /// </summary>
-    private const float SamePositionThresholdSqr = SamePositionThreshold * SamePositionThreshold;
+    public int Count => cells.Count;
 
-    private readonly List<Vector3> positions = new List<Vector3>();
+    public void Clear() => cells.Clear();
 
-    /// <summary>인스펙터 표시나 디버그용 읽기 전용 뷰.</summary>
-    public IReadOnlyList<Vector3> Positions => positions;
+    /// <summary>같은 칸을 두 번 넣어도 하나로 남는다.</summary>
+    public void Add(Vector3 position) => cells.Add(GridUtil.CellOf(position));
 
-    public int Count => positions.Count;
+    public bool Contains(Vector3 position) => cells.Contains(GridUtil.CellOf(position));
 
-    public void Clear() => positions.Clear();
+    /// <summary>칸 좌표로 직접 묻는다. 이미 칸을 들고 있는 쪽이 쓴다.</summary>
+    public bool Contains(Vector3Int cell) => cells.Contains(new Vector3Int(cell.x, cell.y, 0));
 
-    public void Add(Vector3 position)
-    {
-        if (!Contains(position))
-            positions.Add(position);
-    }
-
-    public bool Contains(Vector3 position)
-    {
-        foreach (Vector3 p in positions)
-        {
-            if ((p - position).sqrMagnitude < SamePositionThresholdSqr)
-                return true;
-        }
-        return false;
-    }
-
-    public bool Remove(Vector3 position)
-    {
-        for (int i = 0; i < positions.Count; i++)
-        {
-            if ((positions[i] - position).sqrMagnitude < SamePositionThresholdSqr)
-            {
-                positions.RemoveAt(i);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// <summary>디버그용 필드에 넣기 위한 복사본.</summary>
-    public List<Vector3> ToList() => new List<Vector3>(positions);
+    public bool Remove(Vector3 position) => cells.Remove(GridUtil.CellOf(position));
 }

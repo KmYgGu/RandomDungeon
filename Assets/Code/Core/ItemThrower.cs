@@ -90,15 +90,36 @@ public class ItemThrower
         new Vector2(1, 1), new Vector2(-1, 1), new Vector2(1, -1), new Vector2(-1, -1),
     };
 
+    /// <summary>
+    /// 던진 것에 맞을 수 있는 상대 하나. 적이거나 동료다 — 둘 중 하나만 차 있다.
+    ///
+    /// 예전에는 적 목록과 동료 목록을 따로 두고 서로의 빈자리에 null 을 끼워
+    /// 번호를 맞췄다. 한쪽에만 넣는 순간 번호가 밀려 엉뚱한 상대가 맞는데,
+    /// 에러는 나지 않는다.
+    /// </summary>
+    private readonly struct Target
+    {
+        public readonly Enemy Enemy;
+        public readonly Partner Partner;
+
+        public Target(Enemy enemy, Partner partner)
+        {
+            Enemy = enemy;
+            Partner = partner;
+        }
+    }
+
     private readonly Tilemap tilemap;
     private readonly GroundObjectRegistry ground;
     private readonly List<Enemy> enemies;
+    private readonly bool fromEnemy;
 
-    public ItemThrower(Tilemap tilemap, GroundObjectRegistry ground, List<Enemy> enemies)
+    public ItemThrower(Tilemap tilemap, GroundObjectRegistry ground, List<Enemy> enemies, bool fromEnemy = false)
     {
         this.tilemap = tilemap;
         this.ground = ground;
         this.enemies = enemies;
+        this.fromEnemy = fromEnemy;
     }
 
     /// <summary>
@@ -120,23 +141,25 @@ public class ItemThrower
         // 동료를 빼면 던진 것이 동료를 뚫고 지나간다. 아군만 통과하는 규칙은
         // 편하지만, 회복 아이템을 동료에게 먹일 길도 함께 사라진다.
         // 맞는 쪽이 누구든 아이템의 효과는 똑같이 받는다(ApplyHit).
+        //
+        // 판정(RangedShot)은 칸만 알고, 맞은 것이 몇 번째인지를 돌려준다. 그 번호로
+        // 누구였는지를 되찾으려고 같은 차례로 한 줄 더 적어 둔다(struck).
         var targets = new List<Vector3Int>();
-        var living = new List<Enemy>();
-        var friends = new List<Partner>();
+        var struck = new List<Target>();
 
         foreach (Enemy enemy in enemies)
         {
             if (enemy == null || !enemy.gameObject.activeInHierarchy) continue;
-            living.Add(enemy);
-            friends.Add(null);
+
+            struck.Add(new Target(enemy, null));
             targets.Add(tilemap.WorldToCell(enemy.transform.position));
         }
 
         foreach (Partner partner in GameManager.instance.partners)
         {
             if (partner == null || !partner.gameObject.activeInHierarchy) continue;
-            living.Add(null);
-            friends.Add(partner);
+
+            struck.Add(new Target(null, partner));
             targets.Add(tilemap.WorldToCell(partner.transform.position));
         }
 
@@ -162,10 +185,12 @@ public class ItemThrower
 
         if (shot.HitTarget)
         {
-            if (friends[shot.TargetIndex] != null)
-                ApplyHitToPartner(friends[shot.TargetIndex], item, stats);
+            Target hit = struck[shot.TargetIndex];
+
+            if (hit.Partner != null)
+                ApplyHitToPartner(hit.Partner, item, stats);
             else
-                ApplyHit(living[shot.TargetIndex], item, stats);
+                ApplyHit(hit.Enemy, item, stats, GridUtil.CellCenter(origin), fromEnemy);
 
             // 맞은 아이템은 소모된다.
             UnityEngine.Object.Destroy(item);
@@ -248,13 +273,14 @@ public class ItemThrower
         }
     }
 
-    private static void ApplyHit(Enemy target, GameObject item, PlayerStats stats)
+    private static void ApplyHit(Enemy target, GameObject item, PlayerStats stats, Vector2 attackOrigin, bool fromEnemy)
     {
+        target.NotifyRangedHit(fromEnemy);
         // 돈은 아이템이 아니라 재화다. 액수를 10 으로 나눈 만큼이,
         // 방어력을 무르고 그대로 들어간다.
         if (GoldPile.IsGold(item))
         {
-            target.TakeTrueDamage(GoldPile.DamageOf(GoldPile.AmountOf(item)));
+            target.TakeTrueDamage(GoldPile.DamageOf(GoldPile.AmountOf(item)), attackOrigin, fromEnemy);
             return;
         }
 
@@ -274,7 +300,7 @@ public class ItemThrower
                 break;
 
             default:
-                target.TakeDirectDamage(stats.ThrowDamage);
+                target.TakeDirectDamage(stats.ThrowDamage, attackOrigin, fromEnemy);
                 break;
         }
     }

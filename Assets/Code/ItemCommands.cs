@@ -49,6 +49,7 @@ public class ItemCommands
     private static bool AddToBag(GameObject item)
     {
         if (!Bag.TryAdd(item)) return false;
+        ShopGood.Taken(item);
 
         GameManager.RecordItemDiscovery(ItemInstance.IdOf(item));
         GameManager.ReportRecord(RecordStat.ItemsPicked);
@@ -145,7 +146,7 @@ public class ItemCommands
                 yield break;
 
             case BagMenuController.ItemAction.Swap:
-                SwapWithGround(groundItem, index);
+                yield return SwapWithGround(groundItem, index);
                 yield break;
 
             case BagMenuController.ItemAction.GroundUse:
@@ -210,11 +211,11 @@ public class ItemCommands
     /// 개수가 늘지 않기 때문이다. 가방이 꽉 찼을 때 바닥의 더 좋은 물건을
     /// 가져갈 방법이 이것뿐이라, 이 경우를 막으면 교환의 쓸모가 거의 사라진다.
     /// </summary>
-    private void SwapWithGround(GameObject groundItem, int index)
+    private IEnumerator SwapWithGround(GameObject groundItem, int index)
     {
         InputFocus.ReturnToPlayer();
 
-        if (groundItem == null || Bag.Count == 0) return;
+        if (groundItem == null || Bag.Count == 0) yield break;
 
         // 차고 있는 끈적한 장비는 내놓을 수 없다. 교환도 가방을 떠나는 일이라
         // 여기서 막지 않으면 아래 UnequipIfWearing 이 조용히 벗겨 버린다.
@@ -222,7 +223,7 @@ public class ItemCommands
         if (Gear.IsEquipped(offered) && ItemInstance.IsSticky(offered))
         {
             game.ShowMessage(GameMessage.StickyStuck, ItemInstance.FullNameOf(offered));
-            return;
+            yield break;
         }
 
         // 이름은 GameObject 이름이 아니라 정의에서 읽는다. 바닥에서 집어 든 것도
@@ -245,7 +246,7 @@ public class ItemCommands
         // 바꿔 내놓은 것도 그 자리에서 도로 집으면 교환이 없던 일이 된다.
         game.PlayerComponent?.KeepUnderFootWithoutTaking(given);
 
-        game.EndPlayerTurn(GameMessage.ItemSwapped, givenName, secondName: takenName);
+        game.EndPlayerTurn(GameMessage.ItemSwapped,givenName,secondName:takenName);
     }
 
     /// <summary>
@@ -285,6 +286,7 @@ public class ItemCommands
             yield break;
         }
 
+        ShopGood.Taken(groundItem);
         Ground.Remove(groundItem.transform.position);
         ReportIfFood(groundItem);
         Object.Destroy(groundItem);
@@ -305,6 +307,7 @@ public class ItemCommands
 
         // 날아가는 동안에는 이 칸에 없으므로 바닥 목록에서 먼저 뺀다.
         // ItemThrower 가 떨어진 자리에 다시 넣어 준다.
+        ShopGood.Taken(groundItem);
         Ground.Remove(groundItem.transform.position);
 
         // 밟고 선 칸에 있으니 이미 같은 자리지만, 던지기는 출발점을 기준으로
@@ -326,6 +329,7 @@ public class ItemCommands
     /// <summary>바닥의 물건을 손에 넣을 수 있는 상태로 만든다.</summary>
     private void TakeFromGround(GameObject groundItem)
     {
+        ShopGood.Taken(groundItem);
         Object.DontDestroyOnLoad(groundItem);
         groundItem.name = groundItem.name.Replace("(Clone)", string.Empty);
 
@@ -399,7 +403,7 @@ public class ItemCommands
                 game.PlayerComponent?.KeepUnderFootWithoutTaking(item);
 
                 InputFocus.ReturnToPlayer();
-                game.EndPlayerTurn(GameMessage.ItemDropped, itemName);
+                game.EndPlayerTurn(GameMessage.ItemDropped,itemName);
                 break;
 
             case BagMenuController.ItemAction.Throw:
@@ -454,6 +458,8 @@ public class ItemCommands
     /// <summary>바닥의 아이템을 줍는다. 가방이 가득 찼으면 줍지 못한다.</summary>
     public void PickUpItem(GameObject item)
     {
+        if (ShopGood.IsStock(item))
+        { game.ShowMessage(GameMessage.SteppedOnItem,ItemInstance.FullNameOf(item)); return; }
         if (Bag.IsFull)
         {
             game.ShowMessage(GameMessage.BagFull, ItemInstance.FullNameOf(item));

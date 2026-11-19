@@ -22,13 +22,15 @@ public class DungeonPopulator
     /// <summary>함정을 문에서 이만큼 떨어뜨린다. 문 앞에서 즉사하는 일을 막는다.</summary>
     private const float MinDistanceFromDoors = 1.5f;
 
-    /// <summary>보물방의 아이템 배수와, 몬스터 하우스의 적 배수.</summary>
-    private const int TreasureItemMultiplier = 3;
-    private const int MonsterHouseEnemyMultiplier = 4;
-    private const int MonsterHouseItemMultiplier = 2;
+    /// <summary>통합 몬스터 하우스의 아이템 배수.</summary>
+    private const int MonsterHouseItemMultiplier = 3;
 
-    /// <summary>몇 층마다 방당 적이 한 마리씩 늘어나는가.</summary>
-    private const int StagesPerExtraEnemy = 4;
+    // 적을 몇 마리 놓을지는 EnemyBudget 이 정한다. 숫자만 다루는 규칙이라
+    // 그쪽에 두어야 Unity 없이 확인할 수 있다.
+
+    /// <summary>이번 층에서 일반 방에 이미 놓은 적 수. 층 상한을 지키는 데 쓴다.</summary>
+    private int enemiesPlacedThisFloor;
+    public List<MonsterHouseEncounter> MonsterHouses { get; } = new List<MonsterHouseEncounter>();
 
     private readonly DungeonTilePainter painter;
     private readonly GroundObjectRegistry ground;
@@ -36,6 +38,7 @@ public class DungeonPopulator
     private readonly GameObject[] itemPrefabs;
     private readonly GameObject[] trapPrefabs;
     private readonly GameObject monsterPrefab;
+    private readonly GameObject merchantPrefab;
     private readonly GameObject stairsPrefab;
     private readonly GameObject playerPrefab;
 
@@ -50,55 +53,177 @@ public class DungeonPopulator
         GameObject[] trapPrefabs,
         GameObject monsterPrefab,
         GameObject stairsPrefab,
-        GameObject playerPrefab)
+        GameObject playerPrefab,
+        GameObject merchantPrefab = null)
     {
         this.painter = painter;
         this.ground = ground;
         this.itemPrefabs = itemPrefabs;
         this.trapPrefabs = trapPrefabs;
         this.monsterPrefab = monsterPrefab;
+        this.merchantPrefab = merchantPrefab != null ? merchantPrefab : monsterPrefab;
         this.stairsPrefab = stairsPrefab;
         this.playerPrefab = playerPrefab;
 
         WarnAboutUnspawnableItems();
     }
 
+    private Vector3Int startPosition;
+    private bool hasReservedStart;
     public Vector3Int StairsPosition => stairsPosition;
 
-    /// <summary>계단 위치. 아이템 배치가 이 위치를 피하므로 가장 먼저 정한다.</summary>
-    public void PlaceStairs(DungeonLayout layout)
+    public void ReserveStart(Vector3Int cell)
     {
-        if (layout.IsEmpty) return;
-
-        stairsPosition = layout.RandomRoom().RandomInteriorCell();
-        SpawnOnGround(stairsPrefab, stairsPosition);
+        startPosition = cell;
+        hasReservedStart = true;
+        occupiedByCreatures.Add(cell);
     }
+
+    private bool InStartArea(Vector3Int cell)
+        => hasReservedStart && Mathf.Abs(cell.x - startPosition.x) <= 1
+            && Mathf.Abs(cell.y - startPosition.y) <= 1;
+
+    public void PlaceStairs(Vector3Int cell)
+    {
+        stairsPosition = cell;
+        SpawnOnGround(stairsPrefab, cell);
+    }
+
+    public GameObject PlacePlayer(Vector3Int cell)
+        => UnityEngine.Object.Instantiate(playerPrefab, painter.CellCenter(cell), Quaternion.identity);
 
     /// <summary>방 하나를 채운다. 방의 종류에 따라 양이 달라진다.</summary>
     public void PopulateRoom(RoomInfo room, int baseItems, int baseMonsters, int stage, float minDistanceFromStairs)
     {
+        if (room.Kind == RoomKind.Shop)
+        {
+            if (PopulateShop(room)) return;
+
+            // 상점을 차릴 수 없는 방이었다. 평범한 방으로 되돌려 아래에서 채운다.
+            room.Kind = RoomKind.Normal;
+        }
+        // 이전 버전의 보물방 값이 전달되어도 동일한 하우스로 취급한다.
+        if (room.Kind == RoomKind.Treasure) room.Kind = RoomKind.MonsterHouse;
         int items = baseItems;
-        int monsters = baseMonsters + stage / StagesPerExtraEnemy;
+
+        // 방당 수와 상한은 EnemyBudget 이 정한다. 층이 깊어져도 끝없이 늘지 않는다.
+        int monsters = EnemyBudget.ForRoom(baseMonsters, stage);
+
+        // 몬스터 하우스는 층 상한과 따로 센다(EnemyBudget 주석).
+        bool countsTowardFloorLimit = true;
 
         switch (room.Kind)
         {
-            case RoomKind.Treasure:
-                // 보물방: 아이템이 많고 적은 없다.
-                items *= TreasureItemMultiplier;
-                if (items == 0) items = TreasureItemMultiplier;
-                monsters = 0;
-                break;
-
             case RoomKind.MonsterHouse:
                 // 몬스터 하우스: 적이 몰려 있지만 보상도 크다.
-                monsters *= MonsterHouseEnemyMultiplier;
-                if (monsters == 0) monsters = MonsterHouseEnemyMultiplier;
-                items *= MonsterHouseItemMultiplier;
+                monsters = EnemyBudget.ForMonsterHouse(baseMonsters, stage);
+                items = Mathf.Max(3, items * MonsterHouseItemMultiplier);
+                countsTowardFloorLimit = false;
                 break;
         }
 
+        if (countsTowardFloorLimit)
+            monsters = EnemyBudget.AllowedThisFloor(monsters, enemiesPlacedThisFloor);
+
         SpawnItems(room, items, minDistanceFromStairs);
-        SpawnMonsters(room, monsters, stage);
+
+        MonsterHouseEncounter house = null;
+        if (room.Kind == RoomKind.MonsterHouse)
+        {
+            house = new MonsterHouseEncounter(room.InteriorCellRect);
+            MonsterHouses.Add(house);
+        }
+        int placed = SpawnMonsters(room, monsters, stage, house);
+        if (countsTowardFloorLimit) enemiesPlacedThisFloor += placed;
+    }
+
+    /// <summary>
+    /// 방을 상점으로 차린다 — 가운데에 물건을 늘어놓고 상인을 세운다.
+    /// 차릴 수 없는 방이면 <b>아무것도 놓지 않고</b> false 를 돌려준다.
+    ///
+    /// 어느 방이 상점이고 어디에 늘어놓는지는 ShopPlan 이 정했다. 여기서는 그
+    /// 자리가 실제로 비어 있는지 보고 오브젝트를 만든다. 확인을 전부 마친 뒤에야
+    /// 만들기 시작하므로, 도중에 그만두어 반쯤 차린 상점이 남는 일이 없다.
+    /// </summary>
+    private bool PopulateShop(RoomInfo room)
+    {
+        // 팔 수 있는 것 = 값이 있고 바닥에도 나오는 것. 돈과 값 없는 물건은 빠진다.
+        var stockPrefabs = new List<GameObject>();
+        foreach (GameObject prefab in itemPrefabs)
+        {
+            ItemDescription description = ItemInstance.DescriptionOf(prefab);
+            if (description != null && description.SellPrice > 0 && DropRateOf(prefab) > 0)
+                stockPrefabs.Add(prefab);
+        }
+
+        List<Vector3Int> display = ShopPlan.DisplayCells(room.InteriorCellRect);
+        if (stockPrefabs.Count == 0 || display.Count < 4) return false;
+
+        // 진열할 칸이 전부 빈 바닥이어야 한다. 계단이나 먼저 놓인 물건이 끼어
+        // 있으면 그 방은 상점이 되지 못한다.
+        foreach (Vector3Int cell in display)
+        {
+            if (painter.IsEmpty(cell) || !painter.IsWalkable(cell)) return false;
+            if (cell == stairsPosition || occupiedByItems.Contains(cell)) return false;
+        }
+
+        // 상인은 문 바로 안쪽 칸에 가장 가까운 빈 칸에 선다. 그 칸 자체는 비워
+        // 둔다 — 거기 서면 빚이 없는 손님까지 드나들지 못한다.
+        // 문이 하나뿐인 방만 상점이 되므로(ShopPlan.Eligible) 첫 문이 곧 그 문이다.
+        Door door = room.Doors[0];
+        Vector3Int inward = door.Position - (door.Outside - door.Position);
+
+        Vector3Int waiting = default;
+        bool found = false;
+
+        foreach (Vector2Int cell in room.InteriorCellRect.allPositionsWithin)
+        {
+            var spot = new Vector3Int(cell.x, cell.y, 0);
+
+            if (display.Contains(spot) || spot == inward || spot == stairsPosition) continue;
+            if (!IsFreeOfCreatures(spot)) continue;
+
+            if (!found || (spot - inward).sqrMagnitude < (waiting - inward).sqrMagnitude)
+            {
+                waiting = spot;
+                found = true;
+            }
+        }
+
+        if (!found) return false;
+
+        // 여기부터는 되돌릴 수 없다. 확인은 위에서 모두 끝났다.
+        ShopRoom shop = new GameObject("Shop room").AddComponent<ShopRoom>();
+        shop.Configure(room.InteriorCellRect, door.Position, waiting);
+
+        GameObject merchantObject = UnityEngine.Object.Instantiate(
+            merchantPrefab, painter.CellCenter(waiting), Quaternion.identity);
+
+        Merchant merchant = merchantObject.AddComponent<Merchant>();
+        merchant.Bind(shop);
+        shop.Merchant = merchant;
+        occupiedByCreatures.Add(waiting);
+
+        // 무엇을 놓을지는 바닥에 떨어지는 것과 같은 가중치로 뽑는다.
+        var weights = new List<float>(stockPrefabs.Count);
+        foreach (GameObject prefab in stockPrefabs) weights.Add(DropRateOf(prefab));
+
+        float total = WeightedPick.Total(weights);
+
+        foreach (Vector3Int cell in display)
+        {
+            int index = WeightedPick.Choose(weights, UnityEngine.Random.Range(0f, total));
+
+            GameObject item = SpawnOnGround(stockPrefabs[index], cell);
+            EnhanceIfEquipment(item);
+            occupiedByItems.Add(cell);
+
+            // 값은 그 물건의 시세 그대로다. 상인은 절반에 사서 제값에 판다(ShopLedger.BuyOffer).
+            item.AddComponent<ShopGood>()
+                .Bind(shop, cell, ItemInstance.DescriptionOf(item).SellPrice);
+        }
+
+        return true;
     }
 
     private void SpawnItems(RoomInfo room, int count, float minDistanceFromStairs)
@@ -106,7 +231,8 @@ public class DungeonPopulator
         for (int i = 0; i < count; i++)
         {
             bool IsSuitable(Vector3Int cell)
-                => Vector3Int.Distance(cell, stairsPosition) >= minDistanceFromStairs
+                => cell != stairsPosition && !InStartArea(cell)
+                   && Vector3Int.Distance(cell, stairsPosition) >= minDistanceFromStairs
                    && !occupiedByItems.Contains(cell);
 
             if (!TryFindSpot(room, IsSuitable, out Vector3Int spot)) continue;
@@ -141,19 +267,41 @@ public class DungeonPopulator
             instance.description.Definition, UnityEngine.Random.value);
     }
 
-    private void SpawnMonsters(RoomInfo room, int count, int stage)
+    /// <summary>
+    /// 실제로 놓은 마릿수를 돌려준다.
+    ///
+    /// 자리를 못 찾아 못 놓는 경우가 있으므로(좁은 방·이미 찬 칸) <b>놓으려 한 수가
+    /// 아니라 놓은 수</b>를 세야 층 상한이 맞는다.
+    /// </summary>
+    private int SpawnMonsters(RoomInfo room, int count, int stage, MonsterHouseEncounter house = null)
     {
+        int placed = 0;
+
         for (int i = 0; i < count; i++)
         {
-            if (!TryFindSpot(room, IsFreeOfCreatures, out Vector3Int spot)) continue;
+            if (!TryFindSpot(room, cell => IsFreeOfCreatures(cell) && !InStartArea(cell)
+                && cell != stairsPosition, out Vector3Int spot)) continue;
 
             occupiedByCreatures.Add(spot);
 
             GameObject monster = UnityEngine.Object.Instantiate(
                 monsterPrefab, painter.CellCenter(spot), Quaternion.identity);
 
-            SetMonsterStats(monster.GetComponent<Enemy>(), stage);
+            Enemy enemy = monster.GetComponent<Enemy>();
+            SetMonsterStats(enemy, stage);
+            if (enemy != null)
+            {
+                if (house != null)
+                {
+                    enemy.ConfigureSpawnSleep(1f, 1f);
+                    house.Add(enemy);
+                }
+                else enemy.ConfigureSpawnSleep(UnityEngine.Random.value, UnityEngine.Random.value);
+            }
+            placed++;
         }
+
+        return placed;
     }
 
     /// <summary>
@@ -224,7 +372,11 @@ public class DungeonPopulator
     /// </param>
     private void SpawnPartnerBeside(GameObject player, GameObject partnerPrefab, int expectedId)
     {
-        Vector3Int spot = FindSpotBeside(player.transform.position);
+        if (!TryFindSpotBeside(player.transform.position, out Vector3Int spot))
+        {
+            Debug.LogWarning("동료를 놓을 빈 칸이 없어 이번 층 배치를 건너뜁니다.");
+            return;
+        }
 
         GameObject spawned = UnityEngine.Object.Instantiate(
             partnerPrefab, painter.CellCenter(spot), Quaternion.identity);
@@ -244,71 +396,47 @@ public class DungeonPopulator
         }
     }
 
-    /// <summary>
-    /// 플레이어 곁의 빈 칸. 못 찾으면 플레이어 칸을 그대로 돌려준다.
-    ///
-    /// 겹쳐 놓아도 첫 턴에 동료가 알아서 비켜서지만, 그 한 턴 동안 플레이어와
-    /// 겹쳐 보이는 것이 버그로 읽힌다. 여덟 이웃을 먼저 살펴본다.
-    /// </summary>
-    private Vector3Int FindSpotBeside(Vector3 playerWorld)
+    /// <summary>옆 칸을 살피는 네 방향. 탐색이 칸마다 새로 만들지 않도록 한 번만 둔다.</summary>
+    private static readonly Vector3Int[] CardinalSteps =
     {
-        var center = new Vector3Int(
-            Mathf.FloorToInt(playerWorld.x), Mathf.FloorToInt(playerWorld.y), 0);
+        Vector3Int.right, Vector3Int.left, Vector3Int.up, Vector3Int.down,
+    };
 
-        foreach (Vector2 direction in GridUtil.EightDirections)
-        {
-            var candidate = new Vector3Int(
-                center.x + (int)direction.x, center.y + (int)direction.y, 0);
-
-            if (IsNear(occupiedByCreatures, candidate, MinDistanceBetweenObjects)) continue;
-            if (!painter.IsWalkable(candidate)) continue;
-
-            return candidate;
-        }
-
-        return center;
-    }
-
-    /// <summary>플레이어가 아직 없으면(첫 층이면) 한 명 만들어 놓는다.</summary>
-    public GameObject PlacePlayer(DungeonLayout layout)
+    /// <summary>플레이어에서 연결된 빈 칸만 고른다. 자리가 없으면 겹쳐 놓지 않는다.</summary>
+    private bool TryFindSpotBeside(Vector3 playerWorld, out Vector3Int spot)
     {
-        if (layout.IsEmpty) return null;
-
-        RoomInfo startRoom = PickStartRoom(layout);
-
-        Vector3Int spot = startRoom.RandomInteriorCell();
-        for (int attempt = 0; attempt < MaxPlacementAttempts; attempt++)
+        var center = new Vector3Int(Mathf.FloorToInt(playerWorld.x), Mathf.FloorToInt(playerWorld.y), 0);
+        // 이웃이 찼어도 플레이어 위에 겹치지 않고, 연결된 가장 가까운 칸을 찾는다.
+        var queue = new Queue<Vector3Int>();
+        var seen = new HashSet<Vector3Int> { center };
+        queue.Enqueue(center);
+        while (queue.Count > 0 && seen.Count <= 4096)
         {
-            spot = startRoom.RandomInteriorCell();
-            if (IsFreeOfCreatures(spot)) break;
+            var cell = queue.Dequeue();
+            foreach (Vector3Int direction in CardinalSteps)
+            {
+                var candidate = cell + direction;
+                if (!seen.Add(candidate) || painter.IsEmpty(candidate) || !painter.IsWalkable(candidate)) continue;
+                if (candidate != stairsPosition && IsFreeOfCreatures(candidate))
+                {
+                    spot = candidate;
+                    return true;
+                }
+                queue.Enqueue(candidate);
+            }
         }
-
-        occupiedByCreatures.Add(spot);
-        return UnityEngine.Object.Instantiate(
-            playerPrefab, painter.CellCenter(spot), Quaternion.identity);
+        spot = default;
+        return false;
     }
-
-    /// <summary>몬스터 하우스에서 시작하지는 않도록 한다.</summary>
-    private static RoomInfo PickStartRoom(DungeonLayout layout)
-    {
-        for (int attempt = 0; attempt < MaxPlacementAttempts; attempt++)
-        {
-            RoomInfo candidate = layout.RandomRoom();
-            if (candidate.Kind != RoomKind.MonsterHouse) return candidate;
-        }
-        return layout.Rooms[0];
-    }
-
-    /// <summary>방마다 함정 하나. 계단·아이템·문 근처는 피한다.</summary>
+    /// <summary>일반 방은 함정 하나, 하우스는 최대 네 개. 계단·아이템·문 근처는 피한다.</summary>
     public void PlaceTraps(DungeonLayout layout, float minDistanceFromStairs, float minDistanceFromItems)
     {
+        if (trapPrefabs == null || trapPrefabs.Length == 0) return;
         foreach (RoomInfo room in layout.Rooms)
         {
-            // 보물방에는 함정을 두지 않는다. 보상을 주는 방이므로.
-            if (room.Kind == RoomKind.Treasure) continue;
-
             bool IsSuitable(Vector3Int cell)
             {
+                if (cell == stairsPosition || InStartArea(cell) || !IsFreeOfCreatures(cell)) return false;
                 if (Vector3Int.Distance(cell, stairsPosition) < minDistanceFromStairs) return false;
                 if (IsNear(occupiedByItems, cell, minDistanceFromItems)) return false;
 
@@ -320,23 +448,35 @@ public class DungeonPopulator
                 return true;
             }
 
-            if (!TryFindSpot(room, IsSuitable, out Vector3Int spot)) continue;
-
-            GameObject trap = trapPrefabs[UnityEngine.Random.Range(0, trapPrefabs.Length)];
-            SpawnOnGround(trap, spot);
+            int trapCount = room.Kind == RoomKind.MonsterHouse ? 4 : 1;
+            var trapCells = new HashSet<Vector3Int>();
+            for (int i = 0; i < trapCount; i++)
+            {
+                if (!TryFindSpot(room, cell => !trapCells.Contains(cell) && IsSuitable(cell), out Vector3Int spot)) continue;
+                trapCells.Add(spot);
+                GameObject trap = trapPrefabs[UnityEngine.Random.Range(0, trapPrefabs.Length)];
+                SpawnOnGround(trap, spot);
+            }
         }
     }
 
     // ── 공통 ───────────────────────────────────────────────────────────────
 
-    private static bool TryFindSpot(RoomInfo room, Func<Vector3Int, bool> isSuitable, out Vector3Int spot)
+    private bool TryFindSpot(RoomInfo room, Func<Vector3Int, bool> isSuitable, out Vector3Int spot)
     {
         for (int attempt = 0; attempt < MaxPlacementAttempts; attempt++)
         {
             spot = room.RandomInteriorCell();
-            if (isSuitable(spot)) return true;
+            if (!painter.IsEmpty(spot) && painter.IsWalkable(spot) && isSuitable(spot)) return true;
         }
 
+        // 무작위 50회가 같은 칸만 뽑더라도 남은 빈자리를 놓치지 않는다.
+        for (int x = room.InteriorMinX; x <= room.InteriorMaxX; x++)
+        for (int y = room.InteriorMinY; y <= room.InteriorMaxY; y++)
+        {
+            spot = new Vector3Int(x, y, 0);
+            if (!painter.IsEmpty(spot) && painter.IsWalkable(spot) && isSuitable(spot)) return true;
+        }
         spot = default;
         return false;
     }
@@ -352,6 +492,24 @@ public class DungeonPopulator
                 return true;
         }
         return false;
+    }
+
+    /// <summary>적의 발밑이나 주변 바닥에 한 개. 기존 아이템·함정·계단과 겹치지 않는다.</summary>
+    public GameObject DropEnemyItem(Vector3 world)
+    {
+        Vector3 origin = painter.CellCenter(painter.WorldToCell(world));
+        bool Blocked(Vector3 candidate)
+        {
+            Vector3Int cell = painter.WorldToCell(candidate);
+            return painter.IsEmpty(cell) || !painter.IsWalkable(cell) || ground.Contains(painter.CellCenter(cell));
+        }
+        if (!ItemThrower.TryFindFreeSpot(origin, Blocked, out Vector3 spot)) return null;
+        GameObject prefab = PickWeightedItem();
+        if (prefab == null) return null;
+        GameObject item = SpawnOnGround(prefab, painter.WorldToCell(spot));
+        EnhanceIfEquipment(item);
+        MinimapOverlay.TrackSpawnedItem(item);
+        return item;
     }
 
     private GameObject SpawnOnGround(GameObject prefab, Vector3Int cell)

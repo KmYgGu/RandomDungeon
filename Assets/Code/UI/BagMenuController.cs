@@ -286,10 +286,25 @@ public class BagMenuController
         //
         // 오브젝트 이름이 아니라 시트에 적힌 이름을 쓴다. 표식도 함께 얹어서,
         // 마킹한 뒤 무엇이 붙었는지 그 자리에서 보이게 한다.
+        //
+        // 메뉴 글자는 <b>커서가 움직였을 때만</b> 다시 만든다. 목록 화면(Browse)과
+        // 같은 이유다 — 이 반복문은 입력을 기다리느라 매 프레임 도는데, 창이 같은
+        // 글자를 걸러 주더라도(PanelView) 글자 자체는 그 전에 이미 만들어진다.
+        // 설명이나 마킹을 다녀오면 제목의 표식이 바뀔 수 있으므로 그때도 새로 만든다.
+        string menuText = null;
+        int shownAction = -1;
+
         while (true)
         {
-            string title = TitleOf(inventory[selectedItem]);
-            panel.ShowList(BuildMenuText(title, labels, selectedAction));
+            if (shownAction != selectedAction)
+            {
+                menuText = BuildMenuText(TitleOf(inventory[selectedItem]), labels, selectedAction);
+                shownAction = selectedAction;
+            }
+
+            // 창에는 매번 넘긴다. 설명 화면에서 돌아온 직후처럼 창이 다른 모습일 때
+            // 다시 그려 주는 것은 창 쪽이 알아서 한다.
+            panel.ShowList(menuText);
 
             yield return null;
 
@@ -321,6 +336,9 @@ public class BagMenuController
             if (selectedAction == MarkIndex)
             {
                 yield return ChooseMark(inventory[selectedItem]);
+
+                // 제목에 얹힌 표식이 달라졌을 수 있다.
+                shownAction = -1;
                 continue;
             }
 
@@ -373,9 +391,19 @@ public class BagMenuController
 
         int selected = 0;
 
+        // 커서가 움직였을 때만 글자를 다시 만든다(위 가방 메뉴와 같은 이유).
+        string menuText = null;
+        int shown = -1;
+
         while (true)
         {
-            panel.ShowList(BuildMenuText(GroundItemName, labels, selected));
+            if (shown != selected)
+            {
+                menuText = BuildMenuText(GroundItemName, labels, selected);
+                shown = selected;
+            }
+
+            panel.ShowList(menuText);
 
             yield return null;
 
@@ -570,9 +598,19 @@ public class BagMenuController
     {
         int selected = 0;
 
+        // 커서가 움직였을 때만 글자를 다시 만든다(가방 메뉴와 같은 이유).
+        string menuText = null;
+        int shown = -1;
+
         while (true)
         {
-            panel.ShowList(BuildMenuText(title, labels, selected));
+            if (shown != selected)
+            {
+                menuText = BuildMenuText(title, labels, selected);
+                shown = selected;
+            }
+
+            panel.ShowList(menuText);
 
             // 이 화면을 연 그 키가 곧바로 고르지 않도록 한 프레임 넘긴다.
             yield return null;

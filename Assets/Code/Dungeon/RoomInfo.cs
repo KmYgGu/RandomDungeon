@@ -6,10 +6,12 @@ public enum RoomKind
 {
     /// <summary>평범한 방.</summary>
     Normal,
-    /// <summary>보물방. 아이템이 많고 적은 없다.</summary>
+    /// <summary>이전 버전 호환용 값. 배치 시 MonsterHouse로 변환하며 새로 생성하지 않는다.</summary>
     Treasure,
     /// <summary>몬스터 하우스. 적이 몰려 있고 보상도 크다.</summary>
     MonsterHouse,
+    /// <summary>정사각형·입구 하나인 상점.</summary>
+    Shop,
 }
 
 /// <summary>
